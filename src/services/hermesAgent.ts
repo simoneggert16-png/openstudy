@@ -3,6 +3,7 @@ import {
   FunctionDeclaration,
   GenerateContentResponse,
   GoogleGenAI,
+  MediaResolution,
   Part,
   Schema,
   Type,
@@ -15,6 +16,7 @@ import {
   MainView,
   NoteBlock,
   OpenStudyState,
+  SchoolScheduleItem,
   ScreenSpotlight,
   StudyCard,
   StudyNotePage,
@@ -28,10 +30,22 @@ export interface HermesToolHandlers {
   onCreateNote: (page: StudyNotePage) => void;
   onCreateCards: (cards: StudyCard[]) => void;
   onAddPlanTasks: (tasks: DailyPlanTask[]) => void;
+  onAddSchoolScheduleItems?: (items: SchoolScheduleItem[]) => void;
   onNavigate: (view: MainView, courseId?: string) => void;
   onSaveMemory: (entry: HermesMemoryEntry) => void;
   onSaveSkill: (skill: HermesSkill) => void;
   onLogAction: (entry: HermesToolExecution) => void;
+  captureFreshFullResFrame?: (crop?: {
+    xMin: number;
+    yMin: number;
+    xMax: number;
+    yMax: number;
+  }) => Promise<{
+    base64: string;
+    width: number;
+    height: number;
+    source: 'windows-bridge' | 'screen-share';
+  } | null>;
   bridgeUrl?: string;
   desktopOverlayEnabled?: boolean;
 }
@@ -55,6 +69,38 @@ const VALID_MEMORY_CATEGORIES: ReadonlySet<HermesMemoryEntry['category']> = new 
 ]);
 
 export const HERMES_LIVE_FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
+  {
+    name: 'inspect_screen_detail',
+    description:
+      'PFLICHT-TOOL vor jeder Aussage über konkrete Details auf dem Bildschirm! Macht sofort einen brandneuen, hochauflösenden HD-Screenshot (optional mit Zoom-Ausschnitt) und liest kleine UI-Elemente pixelgenau ab (z. B. aktive Steps im FL Studio Channel Rack, Excel-Zellen, Menüpunkte, Code-Zeilen, Mausposition). Rufe dieses Tool IMMER auf, wenn der Lernende fragt, was er gerade gemacht, geklickt oder gesetzt hat, oder ob etwas stimmt.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        question: {
+          type: Type.STRING,
+          description:
+            'Exakte visuelle Prüffrage, z. B. "Welche Steps (1 bis 16) sind in der Hi-Hat-, Kick-, Clap- und Snare-Zeile im FL Studio Channel Rack aktuell beleuchtet?"',
+        },
+        xMin: {
+          type: Type.NUMBER,
+          description: 'Optionaler Zoom-Ausschnitt links in Prozent (0–95).',
+        },
+        yMin: {
+          type: Type.NUMBER,
+          description: 'Optionaler Zoom-Ausschnitt oben in Prozent (0–95).',
+        },
+        xMax: {
+          type: Type.NUMBER,
+          description: 'Optionaler Zoom-Ausschnitt rechts in Prozent (5–100).',
+        },
+        yMax: {
+          type: Type.NUMBER,
+          description: 'Optionaler Zoom-Ausschnitt unten in Prozent (5–100).',
+        },
+      },
+      required: ['question'],
+    },
+  },
   {
     name: 'highlight_screen_region',
     description:
@@ -254,6 +300,33 @@ export const HERMES_LIVE_FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
       required: ['name', 'description', 'trigger', 'instructions'],
     },
   },
+  {
+    name: 'add_school_schedule',
+    description:
+      'Trägt erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 30 Tage (z. B. aus einem geöffneten Schulportal oder Stundenplan) direkt in den OpenStudy-Prüfungskalender ein.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        items: {
+          type: Type.ARRAY,
+          description: 'Liste erkannter Termine/Prüfungen.',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING, description: 'Titel der Prüfung oder Aufgabe.' },
+              date: { type: Type.STRING, description: 'Datum im Format YYYY-MM-DD.' },
+              courseTitle: {
+                type: Type.STRING,
+                description: 'Fachname, z. B. Mathematik, BWL, Englisch.',
+              },
+            },
+            required: ['title', 'date', 'courseTitle'],
+          },
+        },
+      },
+      required: ['items'],
+    },
+  },
 ];
 
 // ---------- Helpers ----------
@@ -266,6 +339,19 @@ function makeId(prefix: string): string {
 
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function isValidIsoDate(raw: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+  const d = new Date(year, month - 1, day);
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
 }
 
 function nowIsoTimestamp(): string {
@@ -491,14 +577,20 @@ export function buildHermesTeacherSystemPrompt(params: {
     depthDirective,
     modeDirective,
     '',
+    'STRIKTE ANTI-HALLUZINATIONS-REGEL (OBERSTE PFLICHT):',
+    '1. Behaupte NIEMALS, etwas auf dem Bildschirm zu sehen, das du nicht glasklar ablesen kannst. Rate niemals und extrapoliere niemals typische Standardmuster (z. B. niemals behaupten "Hi-Hat auf 1, 3, 5, 7..." oder "Kick auf 1 und Snare auf 3", nur weil du es vorher vorgeschlagen hast!).',
+    '2. Sobald der Lernende fragt, wo er etwas platziert hat, welche Buttons/Steps/Zellen/Werte aktiv sind, ob etwas stimmt oder was gerade im Detail passiert: Rufe ZUERST ZWINGEND das Tool inspect_screen_detail auf (mit einer präzisen Prüffrage und bei kleinen UI-Bereichen gerne zusätzlich einem Zoom-Ausschnitt xMin/yMin/xMax/yMax), bevor du antwortest!',
+    '3. Antworte danach AUSSCHLIESSLICH auf Basis des zurückgegebenen Prüfberichts. Meldet inspect_screen_detail "NICHT SICHER LESBAR", sage ehrlich und direkt auf Deutsch, dass die Stelle zu klein oder unklar ist und bitte kurz ums Vergrössern oder Zoomen — erfinde NIEMALS eine Antwort!',
+    '',
     'BILDSCHIRM-SEHEN & ZEIGE-PROTOKOLL:',
-    '- Sobald die Lernperson ihren Bildschirm teilt oder nach einer anderen App fragt (z. B. Excel, Word, OneNote, PowerPoint, VS Code, Obsidian, PDF-Reader oder Browser), beschreibe zuerst in einem Satz, was du siehst.',
+    '- Sobald die Lernperson ihren Bildschirm teilt oder nach einer anderen App fragt (z. B. Excel, Word, OneNote, PowerPoint, FL Studio, VS Code, Obsidian, PDF-Reader oder Browser), beschreibe zuerst in einem Satz, was du eindeutig siehst (bei feinen UI-Details erst nach inspect_screen_detail).',
     '- Erkläre danach ruhig Schritt für Schritt und rufe PROAKTIV das Werkzeug highlight_screen_region(xPercent, yPercent, label, stepNumber) mit präzisen Prozent-Koordinaten (0–100 von links/oben) auf, um Menüs, Schaltflächen, Zellen, Formeln, Codezeilen oder Diagrammstellen direkt auf dem Bildschirm zu markieren.',
     '- Halte Marker-Labels kurz (max. 40 Zeichen, z. B. "Formelleiste anklicken" oder "Zelle B2 auswählen") und nummeriere aufeinanderfolgende Schritte (1, 2, 3).',
     '- Wenn sich der Kontext ändert oder alte Marker stören, entferne sie zuerst mit clear_screen_highlights.',
     '',
     'WERKZEUG-PRINZIPIEN:',
     '- Erstelle Lernnotizen (create_study_note), Karteikarten (create_flashcards) oder Tagesplan-Aufgaben (add_daily_plan_tasks), sobald sie dem Lernfortschritt konkret helfen oder gewünscht werden.',
+    '- Trage erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 30 Tage (z. B. aus einem geöffneten Schulportal oder Stundenplan) mit add_school_schedule direkt in den OpenStudy-Prüfungskalender ein.',
     '- Nutze save_learning_memory für wichtige dauerhafte Beobachtungen über Lernstil, Stärken, Schwächen oder Ziele.',
     '- Nutze save_custom_skill nur dann, wenn du ein wiederverwendbares Lehrverfahren (SKILL.md) für wiederkehrende Aufgaben festhalten oder verbessern kannst.',
   ].join('\n');
@@ -591,7 +683,7 @@ export function buildHermesTeacherSystemPrompt(params: {
       : '- Noch keine gespeicherten Lernfakten vorhanden.';
 
   const screenStateLine = screenShared
-    ? 'LIVE-BILDSCHIRMSTATUS: AKTIV — Ein aktuelles Bildschirmbild ist sichtbar. Du kannst direkt darauf eingehen und mit highlight_screen_region präzise Marker setzen.'
+    ? 'LIVE-BILDSCHIRMSTATUS: AKTIV — Ein aktuelles Bildschirmbild ist sichtbar. Nutze vor jeder Aussage über kleine UI-Details zwingend inspect_screen_detail und setze bei Bedarf mit highlight_screen_region präzise Marker.'
     : 'LIVE-BILDSCHIRMSTATUS: INAKTIV — Derzeit ist kein Bildschirm geteilt. Falls die Lernperson Hilfe zu einer externen App braucht, weise ruhig auf die Bildschirmfreigabe hin.';
 
   const activeSpotlightsLine =
@@ -613,6 +705,106 @@ export function buildHermesTeacherSystemPrompt(params: {
   ].join('\n');
 
   return [tier1, '', tier2, '', tier3].join('\n');
+}
+
+// ---------- Forensic High-Resolution Screen Inspector ----------
+
+const FORENSIC_SCREEN_INSPECTOR_PROMPT = [
+  'Du bist ein forensischer, streng faktenbasierter Bildschirm-Prüfer. Deine einzige Aufgabe ist das präzise, wörtliche Ablesen sichtbarer Pixel im beigefügten Screenshot (und optionalen Zoom-Ausschnitt).',
+  'Schreibe auf klarem Schweizer Hochdeutsch (ss statt ß), kompakt, strukturiert und ohne Spekulation.',
+  '',
+  'STRENGE PRÜFREGELN:',
+  '1. Prüfe AUSSCHLIESSLICH buchstäblich sichtbare Pixel. Rate niemals, vervollständige niemals fehlende Informationen und nimm niemals typische Standardmuster an (z. B. niemals 1, 3, 5, 7, 9, 11, 13, 15 oder Kick auf 1 / Snare auf 3 unterstellen).',
+  '2. Bei Step-Sequencern, Rastern oder DAWs (z. B. FL Studio Channel Rack):',
+  '   - Liste jede sichtbare Spur bzw. jeden Kanal strikt von oben nach unten exakt mit dem angezeigten Namen auf.',
+  '   - Bestimme visuell die exakte Anzahl der Step-Buttons pro Zeile (häufig 16 Schritte in Vierergruppen: 1–4, 5–8, 9–12, 13–16).',
+  '   - Vergleiche Helligkeit, Füllfarbe und Kontrast JEDES einzelnen Buttons von links nach rechts (Step 1 bis Ende) direkt mit seinen dunklen/inaktiven Nachbarn innerhalb derselben Vierergruppe.',
+  '   - Liste pro Spur AUSSCHLIESSLICH die Step-Nummern auf, die unzweifelhaft hell/beleuchtet/aktiv sind. Sind alle Buttons einer Spur dunkel/inaktiv, schreibe exakt "keine aktiv".',
+  '3. Bei Formularen, Tabellen (Excel), Code-Editoren, Menüs, Browsern oder Dialogen:',
+  '   - Zitiere ausschliesslich buchstäblich lesbaren Text, Zahlen, Zellbezüge, Formeln, geöffnete Menüs, aktive Tabs oder sichtbare Markierungen.',
+  '4. Wenn IRGENDEIN kleiner Button, Step, Wert oder Text zu unscharf, zu klein, abgeschnitten, kontrastarm oder verdeckt ist, um ihn mit 100 % Sicherheit abzulesen, schreibe explizit "NICHT SICHER LESBAR" und nenne kurz den Grund und die betroffene Stelle.',
+  '5. Erfinde niemals Elemente, die nicht eindeutig im Bild erkennbar sind.',
+].join('\n');
+
+interface CapturedScreenFrame {
+  base64: string;
+  width: number;
+  height: number;
+  source: 'windows-bridge' | 'screen-share';
+}
+
+async function runForensicScreenInspection(params: {
+  apiKey: string;
+  question: string;
+  fullFrame: CapturedScreenFrame | null;
+  zoomedFrame: CapturedScreenFrame | null;
+  crop?: { xMin: number; yMin: number; xMax: number; yMax: number };
+}): Promise<string> {
+  const { apiKey, question, fullFrame, zoomedFrame, crop } = params;
+  const ai = new GoogleGenAI({ apiKey });
+
+  const fullB64 = fullFrame ? stripDataUrlPrefix(fullFrame.base64) : '';
+  const zoomedB64 = zoomedFrame ? stripDataUrlPrefix(zoomedFrame.base64) : '';
+
+  const headerLines = [`VISUELLE PRÜFFRAGE: ${question}`];
+  if (fullB64 && fullFrame && zoomedB64 && zoomedFrame && crop) {
+    headerLines.push(
+      `Bild 1 zeigt den vollständigen Bildschirm (${fullFrame.width}×${fullFrame.height} px).`,
+      `Bild 2 zeigt den vergrösserten Zoom-Ausschnitt x=${Math.round(crop.xMin)}%–${Math.round(crop.xMax)}%, y=${Math.round(crop.yMin)}%–${Math.round(crop.yMax)}% (${zoomedFrame.width}×${zoomedFrame.height} px). Nutze Bild 2 vorrangig für feine UI-Elemente und Bild 1 für den Gesamtkontext.`
+    );
+  } else if (fullB64 && fullFrame) {
+    headerLines.push(
+      `Das beigefügte Bild zeigt den vollständigen Bildschirm (${fullFrame.width}×${fullFrame.height} px).`
+    );
+  } else if (zoomedB64 && zoomedFrame) {
+    headerLines.push(
+      `Das beigefügte Bild zeigt den vergrösserten Bildschirmausschnitt (${zoomedFrame.width}×${zoomedFrame.height} px).`
+    );
+  }
+
+  const parts: Part[] = [{ text: headerLines.join('\n') }];
+  if (fullB64) {
+    parts.push({
+      inlineData: {
+        mimeType: 'image/jpeg',
+        data: fullB64,
+      },
+    });
+  }
+  if (zoomedB64) {
+    parts.push({
+      inlineData: {
+        mimeType: 'image/jpeg',
+        data: zoomedB64,
+      },
+    });
+  }
+
+  let lastError: unknown = null;
+  for (const model of FREE_GEMINI_TEXT_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts }],
+        config: {
+          systemInstruction: FORENSIC_SCREEN_INSPECTOR_PROMPT,
+          mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
+          temperature: 0.1,
+        },
+      });
+      const text = response.text?.trim() ?? '';
+      return text || 'NICHT SICHER LESBAR — Die Detailprüfung lieferte keinen eindeutigen Befund.';
+    } catch (err) {
+      lastError = err;
+      const msg = formatError(err);
+      if (isModelUnavailableMessage(msg)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error(`Forensische Bildschirmprüfung fehlgeschlagen: ${formatError(lastError)}`);
 }
 
 // ---------- Tool Executor ----------
@@ -657,6 +849,86 @@ export async function executeHermesToolCall(
 
   try {
     switch (call.name) {
+      case 'inspect_screen_detail': {
+        const question =
+          toTrimmedString(args.question, 600) ||
+          'Beschreibe präzise alle aktuell sichtbaren UI-Details und aktiven Zustände auf dem Bildschirm.';
+
+        const hasCropParam =
+          args.xMin !== undefined ||
+          args.yMin !== undefined ||
+          args.xMax !== undefined ||
+          args.yMax !== undefined;
+
+        let crop: { xMin: number; yMin: number; xMax: number; yMax: number } | undefined;
+        if (hasCropParam) {
+          const xMin = clamp(toFiniteNumber(args.xMin, 0), 0, 95);
+          const yMin = clamp(toFiniteNumber(args.yMin, 0), 0, 95);
+          const xMax = clamp(toFiniteNumber(args.xMax, 100), Math.min(100, xMin + 5), 100);
+          const yMax = clamp(toFiniteNumber(args.yMax, 100), Math.min(100, yMin + 5), 100);
+          const isFullFrame = xMin <= 0.5 && yMin <= 0.5 && xMax >= 99.5 && yMax >= 99.5;
+          if (!isFullFrame) {
+            crop = { xMin, yMin, xMax, yMax };
+          }
+        }
+
+        const apiKey = state.provider.geminiApiKey.trim();
+        const fullFrame = handlers.captureFreshFullResFrame
+          ? await handlers.captureFreshFullResFrame()
+          : null;
+        const zoomedFrame =
+          crop && handlers.captureFreshFullResFrame
+            ? await handlers.captureFreshFullResFrame(crop)
+            : null;
+
+        const validFull =
+          fullFrame && stripDataUrlPrefix(fullFrame.base64).length > 0 ? fullFrame : null;
+        const validZoomed =
+          zoomedFrame && stripDataUrlPrefix(zoomedFrame.base64).length > 0 ? zoomedFrame : null;
+        const primaryFrame = validFull ?? validZoomed;
+
+        if (!primaryFrame || !apiKey) {
+          return finish('error', 'HD-Prüfung nicht verfügbar', {
+            ok: false,
+            verified: false,
+            report:
+              'Kein aktuelles HD-Bildschirmbild verfügbar. Sage dem Lernenden ehrlich, dass du das Detail gerade nicht sicher sehen kannst.',
+          });
+        }
+
+        try {
+          const report = await runForensicScreenInspection({
+            apiKey,
+            question,
+            fullFrame: validFull,
+            zoomedFrame: validZoomed,
+            crop,
+          });
+          const sourceLabel =
+            primaryFrame.source === 'windows-bridge' ? 'Windows HD' : 'Stream';
+          const summary = `HD-Prüfung (${primaryFrame.width}×${primaryFrame.height}, ${sourceLabel}${validZoomed ? ' + Zoom' : ''})`;
+          return finish('ok', summary, {
+            ok: true,
+            verified: true,
+            resolution: `${primaryFrame.width}x${primaryFrame.height}`,
+            source: primaryFrame.source,
+            ...(validZoomed
+              ? { zoomedResolution: `${validZoomed.width}x${validZoomed.height}` }
+              : {}),
+            report,
+          });
+        } catch (err) {
+          const errMsg = formatError(err);
+          return finish('error', `HD-Prüfung fehlgeschlagen: ${errMsg.slice(0, 72)}`, {
+            ok: false,
+            verified: false,
+            report:
+              'Die HD-Detailprüfung konnte technisch nicht abgeschlossen werden. Sage dem Lernenden ehrlich, dass du das Detail gerade nicht sicher ablesen kannst.',
+            error: errMsg,
+          });
+        }
+      }
+
       case 'highlight_screen_region': {
         const rawX = toFiniteNumber(args.xPercent, 50);
         const rawY = toFiniteNumber(args.yPercent, 50);
@@ -985,6 +1257,56 @@ export async function executeHermesToolCall(
         });
       }
 
+      case 'add_school_schedule': {
+        const rawItems = Array.isArray(args.items) ? args.items : [];
+        const items: SchoolScheduleItem[] = [];
+        const seenKeys = new Set<string>();
+
+        for (const raw of rawItems.slice(0, 30)) {
+          if (!raw || typeof raw !== 'object') continue;
+          const record = raw as Record<string, unknown>;
+          const title = toTrimmedString(record.title, 140);
+          const date = toTrimmedString(record.date, 20);
+          const courseTitle = toTrimmedString(record.courseTitle, 80) || 'Allgemein';
+
+          if (!title || !isValidIsoDate(date)) continue;
+
+          const dedupeKey = `${date}|${title.toLowerCase()}`;
+          if (seenKeys.has(dedupeKey)) continue;
+          seenKeys.add(dedupeKey);
+
+          items.push({
+            id: makeId('sched'),
+            title,
+            date,
+            courseTitle,
+            source: 'smart-import',
+          });
+        }
+
+        if (items.length === 0) {
+          return finish('error', 'Keine gültigen Prüfungstermine (YYYY-MM-DD) übergeben', {
+            ok: false,
+            error:
+              'Mindestens ein Termin mit Titel, Fachname und gültigem Datum im Format YYYY-MM-DD ist erforderlich.',
+          });
+        }
+
+        handlers.onAddSchoolScheduleItems?.(items);
+
+        const summary =
+          items.length === 1
+            ? `Termin eingetragen: "${items[0].title}" (${items[0].date}, ${items[0].courseTitle})`
+            : `${items.length} Prüfungstermine im Kalender eingetragen`;
+
+        return finish('ok', summary, {
+          ok: true,
+          count: items.length,
+          itemIds: items.map((item) => item.id),
+          items,
+        });
+      }
+
       default: {
         return finish('error', `Unbekanntes Werkzeug: ${call.name}`, {
           ok: false,
@@ -1058,7 +1380,8 @@ async function generateGeminiWithFallback(
   candidateModels: string[],
   contents: Content[],
   systemInstruction: string,
-  includeTools: boolean
+  includeTools: boolean,
+  hasImage: boolean
 ): Promise<{ response: GenerateContentResponse; model: string }> {
   let lastError: unknown = null;
 
@@ -1069,6 +1392,12 @@ async function generateGeminiWithFallback(
         contents,
         config: {
           systemInstruction,
+          ...(hasImage
+            ? {
+                mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH,
+                temperature: 0.2,
+              }
+            : {}),
           ...(includeTools
             ? { tools: [{ functionDeclarations: HERMES_LIVE_FUNCTION_DECLARATIONS }] }
             : {}),
@@ -1153,7 +1482,8 @@ async function runGeminiHermesLoop(params: {
       activeCandidates,
       contents,
       systemInstruction,
-      allowTools
+      allowTools,
+      Boolean(cleanImage)
     );
     usedModel = model;
     activeCandidates = [model];
@@ -1567,7 +1897,7 @@ export async function runHermesAgentTurn(params: {
     'OPTIONALE OPENSTUDY-AKTIONEN:',
     'Falls du eine OpenStudy-Aktion ausführen willst, füge am Ende deiner Antwort einen oder mehrere Blöcke im Format',
     '<hermes_action>{"tool":"<name>","args":{...}}</hermes_action>',
-    'hinzu. Verfügbare Werkzeuge: highlight_screen_region, clear_screen_highlights, create_study_note, create_flashcards, add_daily_plan_tasks, navigate_app, save_learning_memory, save_custom_skill.',
+    'hinzu. Verfügbare Werkzeuge: highlight_screen_region, clear_screen_highlights, create_study_note, create_flashcards, add_daily_plan_tasks, add_school_schedule, navigate_app, save_learning_memory, save_custom_skill.',
   ].join('\n');
 
   const transcriptHistory = history

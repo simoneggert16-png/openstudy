@@ -131,6 +131,7 @@ export default function App() {
   const [forceOnboarding, setForceOnboarding] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveConnectionState>('idle');
   const [hoveredSchemeId, setHoveredSchemeId] = useState<ColorSchemeId | null>(null);
+  const [pendingTeacherPrompt, setPendingTeacherPrompt] = useState<string | null>(null);
 
   const openSettings = (tab: SettingsTab = 'appearance') => {
     setSettingsTab(tab);
@@ -182,6 +183,19 @@ export default function App() {
   const navigate = (next: MainView) => {
     setView(next);
     setMobileMenuOpen(false);
+  };
+
+  const handleLaunchPortalSync = (portalUrl: string) => {
+    const trimmedUrl = portalUrl.trim();
+    const portalHint = trimmedUrl ? ` (${trimmedUrl})` : '';
+    const today = new Date().toISOString().slice(0, 10);
+    const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    setPendingTeacherPrompt(
+      `Lies auf meinem geteilten Schulportal-Fenster${portalHint} alle Prüfungen, Tests und Abgaben der nächsten 30 Tage (${today} bis ${in30Days}) genau ab und speichere sie mit dem Tool add_school_schedule direkt in meinen OpenStudy-Prüfungsplan.`
+    );
+    navigate('teacher');
   };
 
   const currentViewLabel = activeCourse
@@ -574,6 +588,7 @@ export default function App() {
               onUpsertNote={upsertNote}
               onAddCards={addCards}
               onAddPlanTasks={addPlanTasks}
+              onAddSchoolScheduleItems={addSchoolScheduleItems}
               onNavigate={navigate}
               onAddHermesMemory={addHermesMemory}
               onRemoveHermesMemory={removeHermesMemory}
@@ -584,6 +599,8 @@ export default function App() {
               onClearScreenSpotlights={clearScreenSpotlights}
               onOpenSettings={() => openSettings('ai')}
               onOpenOnboarding={() => setForceOnboarding(true)}
+              initialPrompt={pendingTeacherPrompt}
+              onConsumeInitialPrompt={() => setPendingTeacherPrompt(null)}
             />
           )}
           {view === 'notes' && (
@@ -632,6 +649,7 @@ export default function App() {
               onAddCards={addCards}
               onAddSchoolScheduleItems={addSchoolScheduleItems}
               onUpdateProvider={updateProvider}
+              onLaunchPortalSync={handleLaunchPortalSync}
             />
           )}
         </main>

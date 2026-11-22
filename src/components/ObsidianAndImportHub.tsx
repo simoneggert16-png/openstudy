@@ -1,10 +1,12 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   Calendar,
   CalendarDays,
   Check,
+  ChevronDown,
   CopyPlus,
+  ExternalLink,
   Eye,
   EyeOff,
   FileDown,
@@ -12,10 +14,11 @@ import {
   FileUp,
   FolderOpen,
   GraduationCap,
-  Info,
   KeyRound,
   Layers,
   Link2,
+  Loader2,
+  MonitorPlay,
   Plus,
   RefreshCw,
   Search,
@@ -34,7 +37,6 @@ import {
   StudyNotePage,
   SubjectCourse,
 } from '../types';
-import { checkLocalBridge } from '../services/providers';
 
 interface FsFileHandleLike {
   kind: 'file';
@@ -46,6 +48,69 @@ interface FsDirectoryHandleLike {
   kind: 'directory';
   name: string;
   values(): AsyncIterable<FsFileHandleLike | FsDirectoryHandleLike>;
+}
+
+interface DetectedObsidianVault {
+  id: string;
+  name: string;
+  path: string;
+  isOpen: boolean;
+  exists: boolean;
+}
+
+interface OneNoteNotebookSummary {
+  id: string;
+  name: string;
+  sectionCount: number;
+  pageCount: number;
+}
+
+interface OneNoteRecentPage {
+  id: string;
+  name: string;
+  notebook: string;
+  section: string;
+  lastModified: string;
+}
+
+interface BridgeSyncSummary {
+  obsidianNotesCount: number;
+  oneNotePagesCount: number;
+  upcoming30Days: Array<{
+    title: string;
+    date: string;
+    courseTitle: string;
+    source: 'smart-import';
+  }>;
+  recentOneNotePages: OneNoteRecentPage[];
+  sampleObsidianNotes: ObsidianNote[];
+}
+
+interface BridgeFetchResult<T> {
+  reachable: boolean;
+  ok: boolean;
+  data: T | null;
+}
+
+async function fetchBridgeJson<T>(
+  url: string,
+  options?: RequestInit,
+  timeoutMs = 5000
+): Promise<BridgeFetchResult<T>> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => null)) as T | null;
+    return { reachable: true, ok: res.ok, data };
+  } catch {
+    return { reachable: false, ok: false, data: null };
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 async function collectMarkdownFromDirectory(
@@ -76,11 +141,18 @@ export interface ObsidianAndImportHubProps {
   onAddCards: (cards: StudyCard[]) => void;
   onAddSchoolScheduleItems: (items: SchoolScheduleItem[]) => void;
   onUpdateProvider: (patch: Partial<ProviderConfig>) => void;
+  onLaunchPortalSync?: (portalUrl: string) => void;
 }
 
 type HubTab = 'obsidian' | 'school' | 'notion';
 
 const COURSE_COLORS = ['#0e4d48', '#d96b27', '#2a6e66', '#1f6d4c', '#7c634a'];
+
+const AUTO_SYNC_INTERVALS: Array<{ minutes: number; label: string }> = [
+  { minutes: 30, label: 'Alle 30 Min' },
+  { minutes: 60, label: 'Stündlich' },
+  { minutes: 1440, label: '1× täglich' },
+];
 
 const SAMPLE_ICS = `BEGIN:VCALENDAR
 VERSION:2.0
@@ -119,6 +191,30 @@ function makeId(prefix: string): string {
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function validateHttpsPortalUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function formatShortDateTime(iso: string): string {
+  if (!iso) return 'Noch nicht synchronisiert';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${day}.${month}.${year}, ${hh}:${mm}`;
 }
 
 function stripFrontmatter(markdown: string): string {
@@ -168,6 +264,48 @@ function buildExcerpt(markdown: string): string {
 
   if (!body) return 'Leere Markdown-Datei';
   return body.length > 170 ? `${body.slice(0, 167).trim()}...` : body;
+}
+
+function normalizeBridgeNotes(
+  incoming: ObsidianNote[],
+  existing: ObsidianNote[]
+): ObsidianNote[] {
+  const existingSelection = new Map(
+    existing.map((n) => [n.path, n.selectedForContext])
+  );
+
+  return incoming
+    .filter((n) => n && typeof n.path === 'string')
+    .map((note, idx) => {
+      const content = typeof note.content === 'string' ? note.content : '';
+      const title =
+        typeof note.title === 'string' && note.title.trim()
+          ? note.title.trim()
+          : extractTitleFromMarkdown(content, note.path.split('/').pop() || note.path);
+      const excerpt =
+        typeof note.excerpt === 'string' && note.excerpt.trim()
+          ? note.excerpt.trim()
+          : buildExcerpt(content);
+      const wikilinks = Array.isArray(note.wikilinks)
+        ? note.wikilinks.filter((w): w is string => typeof w === 'string')
+        : extractWikilinks(content);
+      const prevSelected = existingSelection.get(note.path);
+
+      return {
+        path: note.path,
+        title,
+        excerpt,
+        content,
+        wikilinks,
+        selectedForContext:
+          prevSelected !== undefined
+            ? prevSelected
+            : typeof note.selectedForContext === 'boolean'
+              ? note.selectedForContext
+              : idx < 3,
+      };
+    })
+    .sort((a, b) => a.title.localeCompare(b.title));
 }
 
 function markdownToBlocks(markdown: string): NoteBlock[] {
@@ -327,7 +465,6 @@ function parseIcsDate(rawValue: string): string | null {
 }
 
 function parseIcsText(rawIcs: string): ParsedIcsEvent[] {
-  // Unfold RFC 5545 folded lines (CRLF/LF followed by single space or tab)
   const unfolded = rawIcs.replace(/\r?\n[ \t]/g, '');
   const lines = unfolded.split(/\r?\n/);
 
@@ -484,12 +621,23 @@ export function ObsidianAndImportHub({
   onAddCards,
   onAddSchoolScheduleItems,
   onUpdateProvider,
+  onLaunchPortalSync,
 }: ObsidianAndImportHubProps) {
   const [activeTab, setActiveTab] = useState<HubTab>('obsidian');
 
-  // --- Tab 1: Obsidian state ---
+  const normalizedBridgeUrl = useMemo(
+    () => (state.provider.bridgeUrl.trim() || 'http://127.0.0.1:4319').replace(/\/+$/, ''),
+    [state.provider.bridgeUrl]
+  );
+
+  // --- Tab 1: Obsidian & OneNote state ---
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const singleMdInputRef = useRef<HTMLInputElement | null>(null);
+  const [bridgeReachable, setBridgeReachable] = useState<boolean | null>(null);
+  const [detectingVaults, setDetectingVaults] = useState(false);
+  const [detectedVaults, setDetectedVaults] = useState<DetectedObsidianVault[]>([]);
+  const [connectingVaultId, setConnectingVaultId] = useState<string | null>(null);
+
   const [obsidianSearch, setObsidianSearch] = useState('');
   const [onlySelectedContext, setOnlySelectedContext] = useState(false);
   const [obsidianTargetCourseId, setObsidianTargetCourseId] = useState<string>(
@@ -500,9 +648,30 @@ export function ObsidianAndImportHub({
   const [obsidianStatus, setObsidianStatus] = useState<string | null>(null);
   const [loadingVault, setLoadingVault] = useState(false);
   const [vaultFolderName, setVaultFolderName] = useState<string | null>(null);
-  const [bridgeStatus, setBridgeStatus] = useState<'idle' | 'checking' | 'online' | 'offline'>('idle');
 
-  // --- Tab 2: School Import state ---
+  // Local OneNote Desktop state
+  const [scanningOneNote, setScanningOneNote] = useState(false);
+  const [oneNoteScanned, setOneNoteScanned] = useState(false);
+  const [oneNoteAvailable, setOneNoteAvailable] = useState<boolean | null>(null);
+  const [oneNoteNotebooks, setOneNoteNotebooks] = useState<OneNoteNotebookSummary[]>([]);
+  const [oneNoteRecentPages, setOneNoteRecentPages] = useState<OneNoteRecentPage[]>([]);
+  const [oneNoteTotalPages, setOneNoteTotalPages] = useState<number>(0);
+  const [oneNoteStatus, setOneNoteStatus] = useState<string | null>(null);
+  const [importingOneNoteId, setImportingOneNoteId] = useState<string | null>(null);
+  const [importedOneNoteIds, setImportedOneNoteIds] = useState<Record<string, boolean>>({});
+
+  // --- Tab 2: School Portal & Auto-Sync state ---
+  const [portalMessage, setPortalMessage] = useState<string | null>(null);
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncSavingConfig, setSyncSavingConfig] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncCounts, setSyncCounts] = useState<{
+    obsidian: number | null;
+    oneNote: number | null;
+    upcoming30: number | null;
+  }>({ obsidian: null, oneNote: null, upcoming30: null });
+
+  // Collapsed legacy import formats (.ics, syllabus, manual entry)
   const icsFileInputRef = useRef<HTMLInputElement | null>(null);
   const syllabusFileInputRef = useRef<HTMLInputElement | null>(null);
   const [icsRawText, setIcsRawText] = useState('');
@@ -516,10 +685,10 @@ export function ObsidianAndImportHub({
   const [syllabusText, setSyllabusText] = useState('');
   const [syllabusResult, setSyllabusResult] = useState<string | null>(null);
 
-  const [showManualEventForm, setShowManualEventForm] = useState(false);
   const [manualTitle, setManualTitle] = useState('');
   const [manualCourse, setManualCourse] = useState('');
   const [manualDate, setManualDate] = useState('');
+  const [manualMessage, setManualMessage] = useState<string | null>(null);
 
   // --- Tab 3: Notion state ---
   const notionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -574,7 +743,202 @@ export function ObsidianAndImportHub({
     [state.schoolSchedule]
   );
 
-  // --- Handlers: Tab 1 (Obsidian) ---
+  const upcoming30DaysLocalCount = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const limit = today + 30 * 24 * 60 * 60 * 1000;
+    return state.schoolSchedule.filter((item) => {
+      const parts = item.date.split('-').map(Number);
+      if (parts.length !== 3 || parts.some(Number.isNaN)) return false;
+      const t = new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+      return t >= today && t <= limit;
+    }).length;
+  }, [state.schoolSchedule]);
+
+  // --- Auto-detect local Obsidian vaults & bridge sync status on mount ---
+  const detectLocalVaults = useCallback(async () => {
+    setDetectingVaults(true);
+    try {
+      const res = await fetchBridgeJson<{
+        ok?: boolean;
+        vaults?: DetectedObsidianVault[];
+      }>(`${normalizedBridgeUrl}/api/obsidian/detect`, { method: 'GET' }, 3500);
+
+      if (!res.reachable) {
+        setBridgeReachable(false);
+        setDetectedVaults([]);
+        return;
+      }
+
+      setBridgeReachable(true);
+      if (res.ok && res.data?.ok && Array.isArray(res.data.vaults)) {
+        setDetectedVaults(
+          res.data.vaults.filter(
+            (v) => v && typeof v.path === 'string' && v.exists !== false
+          )
+        );
+      } else {
+        setDetectedVaults([]);
+      }
+    } finally {
+      setDetectingVaults(false);
+    }
+  }, [normalizedBridgeUrl]);
+
+  const lastAutoSyncAtRef = useRef(state.provider.lastAutoSyncAt);
+  lastAutoSyncAtRef.current = state.provider.lastAutoSyncAt;
+
+  const onUpdateProviderRef = useRef(onUpdateProvider);
+  onUpdateProviderRef.current = onUpdateProvider;
+
+  useEffect(() => {
+    let cancelled = false;
+    void detectLocalVaults();
+
+    void fetchBridgeJson<{
+      ok?: boolean;
+      lastRunAt?: string;
+      summary?: Partial<BridgeSyncSummary>;
+      config?: {
+        lastRunAt?: string;
+        lastSummary?: Partial<BridgeSyncSummary>;
+      };
+    }>(`${normalizedBridgeUrl}/api/sync/status`, { method: 'GET' }, 3500).then((res) => {
+      if (cancelled || !res.reachable || !res.ok || !res.data?.ok) return;
+      setBridgeReachable(true);
+      const summary = res.data.summary ?? res.data.config?.lastSummary;
+      const remoteLastRunAt = res.data.config?.lastRunAt || res.data.lastRunAt;
+      const localLastRunAt = lastAutoSyncAtRef.current;
+      if (
+        remoteLastRunAt &&
+        (!localLastRunAt || remoteLastRunAt > localLastRunAt)
+      ) {
+        onUpdateProviderRef.current({ lastAutoSyncAt: remoteLastRunAt });
+      }
+      if (summary) {
+        setSyncCounts({
+          obsidian:
+            typeof summary.obsidianNotesCount === 'number'
+              ? summary.obsidianNotesCount
+              : null,
+          oneNote:
+            typeof summary.oneNotePagesCount === 'number'
+              ? summary.oneNotePagesCount
+              : null,
+          upcoming30: Array.isArray(summary.upcoming30Days)
+            ? summary.upcoming30Days.length
+            : null,
+        });
+        if (
+          Array.isArray(summary.recentOneNotePages) &&
+          summary.recentOneNotePages.length > 0
+        ) {
+          setOneNoteRecentPages((prev) =>
+            prev.length > 0 ? prev : summary.recentOneNotePages ?? []
+          );
+          if (typeof summary.oneNotePagesCount === 'number') {
+            setOneNoteTotalPages(summary.oneNotePagesCount);
+          }
+        }
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detectLocalVaults, normalizedBridgeUrl]);
+
+  // --- Helper: Push auto-sync config to local bridge ---
+  const pushSyncConfigToBridge = useCallback(
+    async (override?: {
+      enabled?: boolean;
+      intervalMinutes?: number;
+      vaultPath?: string;
+      portalUrl?: string;
+    }) => {
+      const rawPortal = override?.portalUrl ?? state.provider.schoolPortalUrl ?? '';
+      const safePortalUrl = validateHttpsPortalUrl(rawPortal) ?? '';
+      const payload = {
+        enabled: override?.enabled ?? state.provider.autoSyncEnabled,
+        intervalMinutes:
+          override?.intervalMinutes ?? (state.provider.autoSyncIntervalMinutes || 60),
+        vaultPath: override?.vaultPath ?? state.provider.obsidianVaultPath ?? '',
+        portalUrl: safePortalUrl,
+        scanOneNote: true,
+      };
+
+      const res = await fetchBridgeJson<{ ok?: boolean }>(
+        `${normalizedBridgeUrl}/api/sync/config`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        4500
+      );
+      if (res.reachable) {
+        setBridgeReachable(true);
+      } else {
+        setBridgeReachable(false);
+      }
+      return res;
+    },
+    [
+      normalizedBridgeUrl,
+      state.provider.autoSyncEnabled,
+      state.provider.autoSyncIntervalMinutes,
+      state.provider.obsidianVaultPath,
+      state.provider.schoolPortalUrl,
+    ]
+  );
+
+  // --- Handlers: Tab 1 (Obsidian & OneNote) ---
+  const handleConnectDetectedVault = async (vault: DetectedObsidianVault) => {
+    setConnectingVaultId(vault.id);
+    setObsidianStatus(null);
+    try {
+      const res = await fetchBridgeJson<{
+        ok?: boolean;
+        notes?: ObsidianNote[];
+        error?: string;
+      }>(
+        `${normalizedBridgeUrl}/api/obsidian/notes?vaultPath=${encodeURIComponent(vault.path)}`,
+        { method: 'GET' },
+        12000
+      );
+
+      if (!res.reachable) {
+        setBridgeReachable(false);
+        setObsidianStatus(
+          'Lokale Begleit-Bridge nicht erreichbar. Wähle den Ordner alternativ über «Ordner manuell wählen».'
+        );
+        return;
+      }
+
+      if (!res.ok || !res.data?.ok || !Array.isArray(res.data.notes)) {
+        setObsidianStatus(
+          res.data?.error || `Notizen aus «${vault.name}» konnten nicht geladen werden.`
+        );
+        return;
+      }
+
+      const normalized = normalizeBridgeNotes(res.data.notes, state.obsidianNotes);
+      onSetObsidianNotes(normalized);
+      onUpdateProvider({ obsidianVaultPath: vault.path });
+      setVaultFolderName(vault.name);
+      setSyncCounts((prev) => ({ ...prev, obsidian: normalized.length }));
+      setObsidianStatus(
+        `${normalized.length} Markdown-Notizen aus «${vault.name}» verbunden.`
+      );
+
+      if (state.provider.autoSyncEnabled) {
+        void pushSyncConfigToBridge({ vaultPath: vault.path });
+      }
+    } finally {
+      setConnectingVaultId(null);
+    }
+  };
+
   const processObsidianEntries = async (
     entries: Array<{ file: File; relPath: string }>,
     sourceLabel?: string
@@ -613,7 +977,7 @@ export function ObsidianAndImportHub({
     parsedNotes.sort((a, b) => a.title.localeCompare(b.title));
     onSetObsidianNotes(parsedNotes);
     setObsidianStatus(
-      `${parsedNotes.length} Markdown-Dateien${sourceLabel ? ` aus «${sourceLabel}»` : ''} lokal geladen. Wähle unten aus, welche Notizen der Tutor als Lernkontext nutzen darf.`
+      `${parsedNotes.length} Markdown-Dateien${sourceLabel ? ` aus «${sourceLabel}»` : ''} lokal geladen.`
     );
   };
 
@@ -649,7 +1013,9 @@ export function ObsidianAndImportHub({
   const handlePickObsidianDirectory = async () => {
     const picker = (
       window as unknown as {
-        showDirectoryPicker?: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<FsDirectoryHandleLike>;
+        showDirectoryPicker?: (opts?: {
+          mode?: 'read' | 'readwrite';
+        }) => Promise<FsDirectoryHandleLike>;
       }
     ).showDirectoryPicker;
 
@@ -669,17 +1035,10 @@ export function ObsidianAndImportHub({
       if (err instanceof DOMException && err.name === 'AbortError') {
         return;
       }
-      // Graceful fallback to file input when native directory picker is restricted
       folderInputRef.current?.click();
     } finally {
       setLoadingVault(false);
     }
-  };
-
-  const handleCheckLocalBridge = async () => {
-    setBridgeStatus('checking');
-    const result = await checkLocalBridge(state.provider.bridgeUrl);
-    setBridgeStatus(result.online ? 'online' : 'offline');
   };
 
   const handleSetAllObsidianContext = (selected: boolean) => {
@@ -712,7 +1071,311 @@ export function ObsidianAndImportHub({
     );
   };
 
-  // --- Handlers: Tab 2 (School Import) ---
+  const handleScanOneNote = async () => {
+    setScanningOneNote(true);
+    setOneNoteStatus(null);
+    try {
+      const res = await fetchBridgeJson<{
+        ok?: boolean;
+        available?: boolean;
+        notebooks?: OneNoteNotebookSummary[];
+        recentPages?: OneNoteRecentPage[];
+        totalPages?: number;
+        error?: string;
+      }>(`${normalizedBridgeUrl}/api/onenote/scan`, { method: 'GET' }, 14000);
+
+      if (!res.reachable) {
+        setBridgeReachable(false);
+        setOneNoteStatus(
+          'Lokale Begleit-Bridge nicht aktiv. Sobald sie auf diesem PC läuft, liest OpenStudy deine OneNote-Notizbücher direkt lokal aus.'
+        );
+        return;
+      }
+
+      setBridgeReachable(true);
+      setOneNoteScanned(true);
+
+      if (!res.ok || !res.data?.ok) {
+        setOneNoteStatus(
+          res.data?.error || 'OneNote-Scan konnte nicht abgeschlossen werden.'
+        );
+        return;
+      }
+
+      const available = Boolean(res.data.available);
+      const notebooks = Array.isArray(res.data.notebooks) ? res.data.notebooks : [];
+      const recentPages = Array.isArray(res.data.recentPages)
+        ? res.data.recentPages
+        : [];
+      const totalPages =
+        typeof res.data.totalPages === 'number'
+          ? res.data.totalPages
+          : recentPages.length;
+
+      setOneNoteAvailable(available);
+      setOneNoteNotebooks(notebooks);
+      setOneNoteRecentPages(recentPages);
+      setOneNoteTotalPages(totalPages);
+      setSyncCounts((prev) => ({ ...prev, oneNote: totalPages }));
+
+      if (!available) {
+        setOneNoteStatus('Auf diesem Gerät wurde kein lokales OneNote Desktop erkannt.');
+      } else if (notebooks.length === 0 && recentPages.length === 0) {
+        setOneNoteStatus('OneNote erkannt, es wurden jedoch keine lokalen Seiten gefunden.');
+      }
+    } finally {
+      setScanningOneNote(false);
+    }
+  };
+
+  const handleImportOneNotePage = async (page: OneNoteRecentPage) => {
+    setImportingOneNoteId(page.id);
+    setOneNoteStatus(null);
+    try {
+      const res = await fetchBridgeJson<{
+        ok?: boolean;
+        id?: string;
+        title?: string;
+        content?: string;
+        error?: string;
+      }>(
+        `${normalizedBridgeUrl}/api/onenote/page?id=${encodeURIComponent(page.id)}`,
+        { method: 'GET' },
+        12000
+      );
+
+      if (!res.reachable) {
+        setBridgeReachable(false);
+        setOneNoteStatus('Lokale Begleit-Bridge nicht erreichbar.');
+        return;
+      }
+
+      if (!res.ok || !res.data?.ok) {
+        setOneNoteStatus(
+          res.data?.error || `Seite «${page.name}» konnte nicht gelesen werden.`
+        );
+        return;
+      }
+
+      const courseId =
+        resolvedObsidianCourseId ||
+        state.activeCourseId ||
+        state.courses[0]?.id ||
+        'course-general';
+
+      const notebookSlug = page.notebook
+        .toLowerCase()
+        .replace(/[^a-z0-9äöü-]+/gi, '-')
+        .replace(/^-+|-+$/g, '');
+
+      const notePage: StudyNotePage = {
+        id: makeId('note'),
+        courseId,
+        title: (res.data.title || page.name || 'OneNote-Seite').trim(),
+        tags: notebookSlug ? ['onenote', notebookSlug] : ['onenote'],
+        updatedAt: todayIso(),
+        source: 'school-import',
+        blocks: markdownToBlocks(res.data.content || ''),
+      };
+
+      onUpsertNote(notePage);
+      setImportedOneNoteIds((prev) => ({ ...prev, [page.id]: true }));
+      setOneNoteStatus(
+        `«${notePage.title}» wurde als OpenStudy-Notiz übernommen.`
+      );
+    } finally {
+      setImportingOneNoteId(null);
+    }
+  };
+
+  // --- Handlers: Tab 2 (School Portal & Auto-Sync) ---
+  const handleOpenSchoolPortal = () => {
+    const validUrl = validateHttpsPortalUrl(state.provider.schoolPortalUrl);
+    if (!validUrl) {
+      setPortalMessage(
+        'Bitte gib eine gültige Webadresse ein, die mit https:// beginnt.'
+      );
+      return;
+    }
+    setPortalMessage(null);
+    if (validUrl !== state.provider.schoolPortalUrl) {
+      onUpdateProvider({ schoolPortalUrl: validUrl });
+    }
+    window.open(validUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleTriggerHermesPortalScan = () => {
+    const trimmed = state.provider.schoolPortalUrl.trim();
+    const validUrl = validateHttpsPortalUrl(trimmed);
+    setPortalMessage(null);
+    onLaunchPortalSync?.(validUrl ?? trimmed);
+  };
+
+  const handleToggleAutoSync = async () => {
+    const nextEnabled = !state.provider.autoSyncEnabled;
+    const intervalMinutes = state.provider.autoSyncIntervalMinutes || 60;
+    onUpdateProvider({
+      autoSyncEnabled: nextEnabled,
+      autoSyncIntervalMinutes: intervalMinutes,
+    });
+    setSyncSavingConfig(true);
+    setSyncMessage(null);
+    try {
+      const res = await pushSyncConfigToBridge({
+        enabled: nextEnabled,
+        intervalMinutes,
+      });
+      if (!res.reachable) {
+        setSyncMessage(
+          'Einstellung lokal gespeichert. Sobald die lokale Bridge läuft, startet der Hintergrund-Abgleich automatisch.'
+        );
+      } else if (res.ok) {
+        setSyncMessage(
+          nextEnabled
+            ? 'Hintergrund-Sync aktiviert.'
+            : 'Hintergrund-Sync pausiert.'
+        );
+      }
+    } finally {
+      setSyncSavingConfig(false);
+    }
+  };
+
+  const handleSelectAutoSyncInterval = async (minutes: number) => {
+    onUpdateProvider({ autoSyncIntervalMinutes: minutes });
+    setSyncSavingConfig(true);
+    setSyncMessage(null);
+    try {
+      const res = await pushSyncConfigToBridge({ intervalMinutes: minutes });
+      if (!res.reachable) {
+        setSyncMessage('Intervall lokal gespeichert.');
+      }
+    } finally {
+      setSyncSavingConfig(false);
+    }
+  };
+
+  const handleRunSyncNow = async () => {
+    setSyncRunning(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetchBridgeJson<{
+        ok?: boolean;
+        summary?: BridgeSyncSummary;
+        error?: string;
+      }>(
+        `${normalizedBridgeUrl}/api/sync/run`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vaultPath: state.provider.obsidianVaultPath || '',
+            portalUrl: validateHttpsPortalUrl(state.provider.schoolPortalUrl) ?? '',
+            scanOneNote: true,
+          }),
+        },
+        20000
+      );
+
+      if (!res.reachable) {
+        setBridgeReachable(false);
+        setSyncMessage(
+          'Lokale Begleit-Bridge nicht erreichbar. Du kannst Termine jederzeit über «Mit Hermes 30 Tage einlesen» oder manuell übernehmen.'
+        );
+        return;
+      }
+
+      setBridgeReachable(true);
+
+      if (!res.ok || !res.data?.ok || !res.data.summary) {
+        setSyncMessage(
+          res.data?.error || 'Synchronisation konnte nicht abgeschlossen werden.'
+        );
+        return;
+      }
+
+      const summary = res.data.summary;
+      const nowIso = new Date().toISOString();
+
+      // Deduplicate upcoming 30-day schedule items against state.schoolSchedule
+      const existingKeys = new Set(
+        state.schoolSchedule.map(
+          (item) => `${item.date}::${item.title.trim().toLowerCase()}`
+        )
+      );
+      const freshItems: SchoolScheduleItem[] = [];
+      if (Array.isArray(summary.upcoming30Days)) {
+        for (const entry of summary.upcoming30Days) {
+          if (!entry?.title || !entry?.date) continue;
+          const key = `${entry.date}::${entry.title.trim().toLowerCase()}`;
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          freshItems.push({
+            id: makeId('sch'),
+            title: entry.title.trim(),
+            date: entry.date,
+            courseTitle: (entry.courseTitle || 'Allgemein').trim(),
+            source: 'smart-import',
+          });
+        }
+      }
+
+      if (freshItems.length > 0) {
+        onAddSchoolScheduleItems(freshItems);
+      }
+
+      // Merge sampleObsidianNotes cleanly (preserving context toggles)
+      if (
+        Array.isArray(summary.sampleObsidianNotes) &&
+        summary.sampleObsidianNotes.length > 0
+      ) {
+        const normalizedSamples = normalizeBridgeNotes(
+          summary.sampleObsidianNotes,
+          state.obsidianNotes
+        );
+        if (state.obsidianNotes.length === 0) {
+          onSetObsidianNotes(normalizedSamples);
+        } else {
+          const byPath = new Map(state.obsidianNotes.map((n) => [n.path, n]));
+          for (const sample of normalizedSamples) {
+            byPath.set(sample.path, sample);
+          }
+          onSetObsidianNotes(
+            Array.from(byPath.values()).sort((a, b) =>
+              a.title.localeCompare(b.title)
+            )
+          );
+        }
+      }
+
+      if (
+        Array.isArray(summary.recentOneNotePages) &&
+        summary.recentOneNotePages.length > 0
+      ) {
+        setOneNoteRecentPages(summary.recentOneNotePages);
+        setOneNoteTotalPages(summary.oneNotePagesCount);
+      }
+
+      onUpdateProvider({ lastAutoSyncAt: nowIso });
+      setSyncCounts({
+        obsidian: summary.obsidianNotesCount,
+        oneNote: summary.oneNotePagesCount,
+        upcoming30: Array.isArray(summary.upcoming30Days)
+          ? summary.upcoming30Days.length
+          : upcoming30DaysLocalCount + freshItems.length,
+      });
+
+      setSyncMessage(
+        freshItems.length > 0
+          ? `Synchronisation abgeschlossen: ${freshItems.length} neue ${freshItems.length === 1 ? 'Termin' : 'Termine'} in den Prüfungsplan übernommen.`
+          : 'Synchronisation abgeschlossen — alle Notizen und Termine sind aktuell.'
+      );
+    } finally {
+      setSyncRunning(false);
+    }
+  };
+
+  // --- Handlers: Collapsed Legacy Formats (.ics, Syllabus, Manual Entry) ---
   const handleParseIcsInput = (content: string) => {
     setIcsRawText(content);
     const events = parseIcsText(content);
@@ -868,10 +1531,10 @@ export function ObsidianAndImportHub({
         source: 'manual',
       },
     ]);
+    setManualMessage(`«${manualTitle.trim()}» am ${manualDate} hinzugefügt.`);
     setManualTitle('');
     setManualCourse('');
     setManualDate('');
-    setShowManualEventForm(false);
   };
 
   // --- Handlers: Tab 3 (Notion) ---
@@ -939,8 +1602,15 @@ export function ObsidianAndImportHub({
     directory: '',
   } as React.InputHTMLAttributes<HTMLInputElement>;
 
+  const displayedObsidianCount =
+    syncCounts.obsidian !== null ? syncCounts.obsidian : state.obsidianNotes.length;
+  const displayedOneNoteCount =
+    syncCounts.oneNote !== null ? syncCounts.oneNote : oneNoteTotalPages;
+  const displayedUpcoming30Count =
+    syncCounts.upcoming30 !== null ? syncCounts.upcoming30 : upcoming30DaysLocalCount;
+
   return (
-    <div className="mx-auto max-w-6xl animate-enter space-y-6 pb-10">
+    <div className="mx-auto max-w-5xl animate-enter space-y-7 pb-12">
       {/* Page Header */}
       <header
         className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 border-b pb-5"
@@ -948,10 +1618,10 @@ export function ObsidianAndImportHub({
       >
         <div>
           <p className="text-[13px] text-[var(--text-secondary)]">
-            Lokaler Obsidian-Vault, Schulkalender (.ics) und Notion-Markdown
+            Obsidian, OneNote Desktop, Schulportal und Notion
           </p>
           <h1 className="font-display font-normal mt-1 text-[30px] sm:text-[34px] leading-[1.15] text-[var(--text-primary)]">
-            Wissens-Hub & Import
+            Import &amp; Sync
           </h1>
         </div>
 
@@ -962,31 +1632,37 @@ export function ObsidianAndImportHub({
           </span>
           <span className="text-[var(--border-strong)]">·</span>
           <span>Termine: {state.schoolSchedule.length}</span>
+          {state.provider.autoSyncEnabled && (
+            <>
+              <span className="text-[var(--border-strong)]">·</span>
+              <span className="text-[var(--accent)]">Auto-Sync an</span>
+            </>
+          )}
         </div>
       </header>
 
       {/* 3-Tab Editorial Underline Navigation */}
       <div
         role="tablist"
-        aria-label="Import- und Integrationsbereiche"
-        className="flex flex-wrap gap-6 border-b"
+        aria-label="Import- und Synchronisationsbereiche"
+        className="flex flex-wrap gap-7 border-b"
         style={{ borderColor: 'var(--border-hairline)' }}
       >
         {(
           [
             {
               id: 'obsidian' as const,
-              label: 'Obsidian-Vault',
+              label: 'Obsidian & OneNote',
               icon: FolderOpen,
             },
             {
               id: 'school' as const,
-              label: 'Schul-Import (.ics & Stoff)',
+              label: 'Schulportal & Auto-Sync',
               icon: CalendarDays,
             },
             {
               id: 'notion' as const,
-              label: 'Notion & Markdown',
+              label: 'Notion',
               icon: FileDown,
             },
           ] as const
@@ -1024,34 +1700,19 @@ export function ObsidianAndImportHub({
       </div>
 
       {/* ================================================================= */}
-      {/* TAB 1: OBSIDIAN-VAULT (LOKAL)                                     */}
+      {/* TAB 1: OBSIDIAN & ONENOTE                                         */}
       {/* ================================================================= */}
       {activeTab === 'obsidian' && (
-        <div className="space-y-5">
-          {/* Calm Editorial Privacy Note */}
-          <div className="border-l-2 border-[var(--positive)] pl-3.5 py-0.5 flex items-start gap-2.5">
-            <ShieldCheck
-              size={16}
-              strokeWidth={1.5}
-              className="mt-0.5 shrink-0 text-[var(--positive)]"
-            />
-            <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
-              <span className="font-medium text-[var(--text-primary)]">
-                Deine Dateien bleiben auf diesem Gerät.
-              </span>{' '}
-              Der Browser liest gewählte Markdown-Dateien direkt im lokalen Speicher. Nur Notizen, die du gezielt freigibst, dienen dem Tutor als Lernkontext.
-            </p>
-          </div>
-
-          {/* Vault Picker Card */}
-          <div className="surface-card p-6 space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="space-y-6">
+          {/* Section 1: 1-Klick-Obsidian-Vaults */}
+          <section className="surface-card p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div className="space-y-1">
-                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)]">
-                  Lokalen Obsidian-Ordner verbinden
+                <h2 className="font-display font-normal text-[22px] leading-snug text-[var(--text-primary)]">
+                  Obsidian-Vaults
                 </h2>
-                <p className="text-[13.5px] text-[var(--text-secondary)]">
-                  Wähle direkt über den Ordner-Dialog deinen Vault oder einen Fachordner. [[Wikilinks]] und Textauszüge werden unmittelbar indiziert.
+                <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
+                  Lokale Vaults erscheinen automatisch zum Verbinden. Alternativ wählst du deinen Ordner direkt im Browser.
                   {vaultFolderName && (
                     <span className="ml-1.5 font-mono-num text-[12px] text-[var(--accent)]">
                       · {vaultFolderName}
@@ -1088,25 +1749,127 @@ export function ObsidianAndImportHub({
                   type="button"
                   onClick={() => void handlePickObsidianDirectory()}
                   disabled={loadingVault}
-                  className="btn-accent"
+                  className={
+                    detectedVaults.length > 0 ? 'btn-secondary' : 'btn-accent'
+                  }
                 >
                   <FolderOpen size={15} strokeWidth={1.5} />
-                  {loadingVault ? 'Lese Ordner...' : 'Vault-Ordner wählen'}
+                  {loadingVault ? 'Lese Ordner...' : 'Ordner manuell wählen'}
                 </button>
                 <button
                   type="button"
                   onClick={() => singleMdInputRef.current?.click()}
                   disabled={loadingVault}
-                  className="btn-secondary"
+                  className="btn-ghost h-9 px-2.5 text-[13px]"
                 >
-                  <FileUp size={15} strokeWidth={1.5} />
-                  Einzelne .md-Dateien
+                  <FileUp size={14} strokeWidth={1.5} />
+                  Einzelne .md
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void detectLocalVaults()}
+                  disabled={detectingVaults}
+                  className="btn-ghost h-9 px-2 text-[12.5px]"
+                  title="Lokale Obsidian-Vaults erneut suchen"
+                  aria-label="Lokale Obsidian-Vaults erneut suchen"
+                >
+                  <RefreshCw
+                    size={14}
+                    strokeWidth={1.5}
+                    className={detectingVaults ? 'animate-spin' : ''}
+                  />
                 </button>
               </div>
             </div>
 
+            {/* Detected Local Obsidian Vaults (Hairline Rows) */}
+            {detectingVaults && detectedVaults.length === 0 ? (
+              <div
+                className="border-t pt-4 flex items-center gap-2 text-[13px] text-[var(--text-muted)]"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+                <span>Suche nach lokalen Obsidian-Vaults...</span>
+              </div>
+            ) : detectedVaults.length > 0 ? (
+              <div
+                className="divide-y border-t"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                {detectedVaults.map((vault) => {
+                  const isConnected =
+                    state.provider.obsidianVaultPath === vault.path;
+                  const isLoadingThis = connectingVaultId === vault.id;
+
+                  return (
+                    <div
+                      key={vault.id}
+                      className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      style={{ borderColor: 'var(--border-hairline)' }}
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className="inline-block h-2 w-2 rounded-full shrink-0"
+                            style={{
+                              backgroundColor:
+                                isConnected || vault.isOpen
+                                  ? 'var(--positive)'
+                                  : 'var(--border-strong)',
+                            }}
+                            aria-hidden="true"
+                          />
+                          <span className="text-[14.5px] font-medium text-[var(--text-primary)] truncate">
+                            {vault.name}
+                          </span>
+                          {isConnected && (
+                            <span className="text-[12px] font-medium text-[var(--accent)]">
+                              · Verbunden
+                            </span>
+                          )}
+                          {!isConnected && vault.isOpen && (
+                            <span className="text-[12px] text-[var(--text-muted)]">
+                              · Geöffnet in Obsidian
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[12px] font-mono-num text-[var(--text-muted)] truncate pl-4">
+                          {vault.path}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleConnectDetectedVault(vault)}
+                        disabled={connectingVaultId !== null}
+                        className="btn-accent h-8 px-3.5 text-[13px] shrink-0 self-start sm:self-center"
+                      >
+                        {isLoadingThis ? (
+                          <>
+                            <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
+                            <span>Lade...</span>
+                          </>
+                        ) : (
+                          <span>{isConnected ? 'Neu laden' : 'Verbinden'}</span>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                className="border-t pt-3.5 text-[13px] text-[var(--text-muted)]"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                {bridgeReachable === false
+                  ? 'Lokale Begleit-Bridge ist aktuell nicht aktiv — wähle deinen Vault-Ordner einfach direkt über «Ordner manuell wählen».'
+                  : 'Keine Obsidian-Vaults automatisch gefunden. Wähle deinen Ordner über «Ordner manuell wählen».'}
+              </div>
+            )}
+
             {obsidianStatus && (
-              <div className="border-l-2 border-[var(--accent)] pl-3.5 py-1 text-[13px] text-[var(--text-primary)] flex items-center justify-between gap-2">
+              <div className="border-l-2 border-[var(--accent)] pl-3.5 py-0.5 text-[13px] text-[var(--text-primary)] flex items-center justify-between gap-2">
                 <span>{obsidianStatus}</span>
                 <button
                   type="button"
@@ -1120,22 +1883,11 @@ export function ObsidianAndImportHub({
             )}
 
             {/* Loaded Obsidian Notes Explorer */}
-            {state.obsidianNotes.length === 0 ? (
-              <div className="border-t border-[var(--border-hairline)] pt-8 pb-4 text-center space-y-2">
-                <FolderOpen
-                  size={22}
-                  strokeWidth={1.5}
-                  className="mx-auto text-[var(--text-muted)]"
-                />
-                <p className="font-display font-normal text-[19px] text-[var(--text-primary)]">
-                  Noch kein Obsidian-Vault verbunden
-                </p>
-                <p className="text-[13.5px] text-[var(--text-secondary)] max-w-md mx-auto">
-                  Wähle oben deinen lokalen Vault-Ordner aus, um deine Markdown-Notizen zu durchsuchen und gezielt für den Tutor freizugeben.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4 pt-4 border-t border-[var(--border-hairline)]">
+            {state.obsidianNotes.length > 0 && (
+              <div
+                className="space-y-4 pt-5 border-t"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
                 {/* Search, Filter & Destination Course Controls */}
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
                   <div className="flex flex-wrap items-center gap-2 flex-1">
@@ -1205,7 +1957,7 @@ export function ObsidianAndImportHub({
                       onClick={() => handleSetAllObsidianContext(true)}
                       className="btn-ghost h-8 px-2.5 text-[12.5px]"
                     >
-                      Alle aktivieren
+                      Alle
                     </button>
                     <button
                       type="button"
@@ -1223,6 +1975,7 @@ export function ObsidianAndImportHub({
                       }}
                       className="btn-ghost h-8 px-2 text-[12.5px] hover:text-[var(--negative)]"
                       title="Geladene Vault-Liste entfernen"
+                      aria-label="Geladene Vault-Liste entfernen"
                     >
                       <Trash2 size={14} strokeWidth={1.5} />
                     </button>
@@ -1230,7 +1983,7 @@ export function ObsidianAndImportHub({
                 </div>
 
                 {/* Notes List (flat hairline rows) */}
-                <div className="divide-y divide-[var(--border-hairline)] max-h-[520px] overflow-y-auto pr-1">
+                <div className="divide-y divide-[var(--border-hairline)] max-h-[480px] overflow-y-auto pr-1">
                   {filteredObsidianNotes.length === 0 ? (
                     <p className="text-[13.5px] text-[var(--text-muted)] py-6 text-center">
                       Keine Notizen entsprechen dem aktuellen Filter.
@@ -1282,7 +2035,11 @@ export function ObsidianAndImportHub({
                               >
                                 {isCopied ? (
                                   <>
-                                    <Check size={14} strokeWidth={1.5} className="text-[var(--positive)]" />
+                                    <Check
+                                      size={14}
+                                      strokeWidth={1.5}
+                                      className="text-[var(--positive)]"
+                                    />
                                     Kopiert
                                   </>
                                 ) : (
@@ -1346,444 +2103,423 @@ export function ObsidianAndImportHub({
                 </div>
               </div>
             )}
+          </section>
 
-            {/* Understated optional local bridge status check */}
-            <div
-              className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-[12.5px]"
-              style={{ borderColor: 'var(--border-hairline)', color: 'var(--text-muted)' }}
-            >
-              <span>
-                Optional: Lokale Desktop-Bridge für automatische Ordnersynchronisation
-                {bridgeStatus === 'online' && (
-                  <span className="ml-2 font-medium text-[var(--positive)]">· Verbunden</span>
-                )}
-                {bridgeStatus === 'offline' && (
-                  <span className="ml-2 text-[var(--text-secondary)]">· Nicht aktiv</span>
-                )}
-              </span>
+          {/* Section 2: Lokaler OneNote-Desktop-Scan */}
+          <section className="surface-card p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+              <div className="space-y-1">
+                <h2 className="font-display font-normal text-[22px] leading-snug text-[var(--text-primary)]">
+                  Lokales OneNote (Desktop)
+                </h2>
+                <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
+                  Liest deine lokalen OneNote-Notizbücher direkt auf diesem PC — ohne Microsoft-Cloud-Login oder OAuth.
+                </p>
+              </div>
+
               <button
                 type="button"
-                onClick={() => void handleCheckLocalBridge()}
-                disabled={bridgeStatus === 'checking'}
-                className="btn-ghost h-7 px-2 text-[12px]"
+                onClick={() => void handleScanOneNote()}
+                disabled={scanningOneNote}
+                className="btn-accent shrink-0 self-start"
               >
-                <RefreshCw
-                  size={12}
-                  strokeWidth={1.5}
-                  className={bridgeStatus === 'checking' ? 'animate-spin' : ''}
-                />
-                <span>{bridgeStatus === 'checking' ? 'Prüfe...' : 'Bridge prüfen'}</span>
+                {scanningOneNote ? (
+                  <>
+                    <Loader2 size={15} strokeWidth={1.5} className="animate-spin" />
+                    <span>Scanne...</span>
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={15} strokeWidth={1.5} />
+                    <span>OneNote jetzt scannen</span>
+                  </>
+                )}
               </button>
             </div>
-          </div>
+
+            {oneNoteStatus && (
+              <div className="border-l-2 border-[var(--accent)] pl-3.5 py-0.5 text-[13px] text-[var(--text-primary)] flex items-center justify-between gap-2">
+                <span>{oneNoteStatus}</span>
+                <button
+                  type="button"
+                  onClick={() => setOneNoteStatus(null)}
+                  aria-label="Meldung schliessen"
+                  className="p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X size={14} strokeWidth={1.5} />
+                </button>
+              </div>
+            )}
+
+            {/* Detected OneNote Notebooks */}
+            {oneNoteNotebooks.length > 0 && (
+              <div
+                className="border-t pt-4 space-y-2.5"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[12.5px] font-medium text-[var(--text-secondary)]">
+                    Erkannte Notizbücher ({oneNoteNotebooks.length})
+                  </span>
+                  <span className="text-[12px] font-mono-num text-[var(--text-muted)]">
+                    {oneNoteTotalPages} Seiten gesamt
+                  </span>
+                </div>
+                <div className="divide-y divide-[var(--border-hairline)]">
+                  {oneNoteNotebooks.map((nb) => (
+                    <div
+                      key={nb.id}
+                      className="py-2.5 flex items-center justify-between gap-3 text-[13.5px]"
+                    >
+                      <span className="font-medium text-[var(--text-primary)] truncate">
+                        {nb.name}
+                      </span>
+                      <span className="font-mono-num text-[12px] text-[var(--text-muted)] shrink-0">
+                        {nb.sectionCount} Abschnitte · {nb.pageCount} Seiten
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recent OneNote Pages with 1-Click Import */}
+            {oneNoteRecentPages.length > 0 && (
+              <div
+                className="border-t pt-4 space-y-3"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12.5px] font-medium text-[var(--text-secondary)]">
+                    Neueste OneNote-Seiten
+                  </span>
+                  <label className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--text-muted)]">
+                    Zielkurs:
+                    <select
+                      value={resolvedObsidianCourseId}
+                      onChange={(e) => setObsidianTargetCourseId(e.target.value)}
+                      className="h-8 px-2 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[12.5px] text-[var(--text-primary)]"
+                    >
+                      {state.courses.map((c) => (
+                        <option
+                          key={c.id}
+                          value={c.id}
+                          style={{
+                            backgroundColor: 'var(--bg-card)',
+                            color: 'var(--text-primary)',
+                          }}
+                        >
+                          {c.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="divide-y divide-[var(--border-hairline)] max-h-[360px] overflow-y-auto pr-1">
+                  {oneNoteRecentPages.map((page) => {
+                    const isImporting = importingOneNoteId === page.id;
+                    const isImported = Boolean(importedOneNoteIds[page.id]);
+
+                    return (
+                      <div
+                        key={page.id}
+                        className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0 space-y-0.5">
+                          <div className="text-[14px] font-medium text-[var(--text-primary)] truncate">
+                            {page.name}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-[var(--text-muted)]">
+                            <span>{page.notebook}</span>
+                            <span>·</span>
+                            <span>{page.section}</span>
+                            {page.lastModified && (
+                              <>
+                                <span>·</span>
+                                <span className="font-mono-num">
+                                  {formatShortDateTime(page.lastModified)}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void handleImportOneNotePage(page)}
+                          disabled={importingOneNoteId !== null}
+                          className="btn-secondary h-8 px-3 text-[12.5px] shrink-0 self-start sm:self-center"
+                        >
+                          {isImporting ? (
+                            <>
+                              <Loader2
+                                size={13}
+                                strokeWidth={1.5}
+                                className="animate-spin"
+                              />
+                              <span>Lade...</span>
+                            </>
+                          ) : isImported ? (
+                            <>
+                              <Check
+                                size={14}
+                                strokeWidth={1.5}
+                                className="text-[var(--positive)]"
+                              />
+                              <span>Übernommen</span>
+                            </>
+                          ) : (
+                            <>
+                              <CopyPlus size={14} strokeWidth={1.5} />
+                              <span>Als Notiz übernehmen</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {!oneNoteScanned &&
+              oneNoteNotebooks.length === 0 &&
+              oneNoteRecentPages.length === 0 &&
+              oneNoteAvailable === null && (
+                <p
+                  className="border-t pt-3.5 text-[13px] text-[var(--text-muted)]"
+                  style={{ borderColor: 'var(--border-hairline)' }}
+                >
+                  Klicke auf «OneNote jetzt scannen», um deine zuletzt bearbeiteten Seiten lokal anzuzeigen und einzeln als Lernnotiz zu übernehmen.
+                </p>
+              )}
+          </section>
         </div>
       )}
 
       {/* ================================================================= */}
-      {/* TAB 2: SCHUL-IMPORT (KALENDER .ICS & STOFF-IMPORT)                */}
+      {/* TAB 2: SCHULPORTAL & AUTO-SYNC                                    */}
       {/* ================================================================= */}
       {activeTab === 'school' && (
         <div className="space-y-6">
-          {/* Calm Editorial Info Note */}
-          <div className="border-l-2 border-[var(--accent)] pl-3.5 py-0.5 flex items-start gap-2.5">
-            <Info
-              size={16}
-              strokeWidth={1.5}
-              className="mt-0.5 shrink-0 text-[var(--accent)]"
-            />
-            <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
-              <span className="font-medium text-[var(--text-primary)]">
-                Offen für jede Schule und Hochschule:
-              </span>{' '}
-              Kein Schul-Login und keine Admin-Freigabe nötig. Exportiere deinen Stunden- oder Prüfungsplan als .ics-Kalender oder füge Lernziele, Skripte und Textauszüge direkt ein.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-            {/* Left Card: .ics Calendar Import */}
-            <div className="surface-card p-6 space-y-4">
-              <div className="space-y-1">
-                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)] inline-flex items-center gap-2">
-                  <Calendar size={17} strokeWidth={1.5} className="text-[var(--accent)]" />
-                  .ics Kalender-Import
-                </h2>
-                <p className="text-[13.5px] text-[var(--text-secondary)]">
-                  Lade eine .ics-Datei hoch oder füge iCal-Text ein. Alle Termine werden lokal im Browser ausgelesen.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  ref={icsFileInputRef}
-                  type="file"
-                  accept=".ics,.ical,text/calendar"
-                  onChange={(e) => {
-                    void handleIcsFileUpload(e.target.files);
-                    e.target.value = '';
-                  }}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => icsFileInputRef.current?.click()}
-                  className="btn-accent h-9 text-[13px]"
-                >
-                  <Upload size={15} strokeWidth={1.5} />
-                  .ics-Datei wählen
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleParseIcsInput(SAMPLE_ICS)}
-                  className="btn-secondary h-9 text-[13px]"
-                >
-                  Beispiel-Kalender testen
-                </button>
-              </div>
-
-              <div className="space-y-1.5">
-                <label
-                  htmlFor="ics-textarea"
-                  className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
-                >
-                  Oder iCal-Text direkt einfügen
-                </label>
-                <textarea
-                  id="ics-textarea"
-                  rows={5}
-                  value={icsRawText}
-                  onChange={(e) => setIcsRawText(e.target.value)}
-                  placeholder="BEGIN:VCALENDAR&#10;BEGIN:VEVENT&#10;DTSTART;VALUE=DATE:20261215&#10;SUMMARY:Biologie Test: Genetik&#10;END:VEVENT&#10;END:VCALENDAR"
-                  className="w-full p-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] font-mono-num text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
-                />
-                {icsRawText.trim() && parsedIcsEvents.length === 0 && (
-                  <button
-                    type="button"
-                    onClick={() => handleParseIcsInput(icsRawText)}
-                    className="btn-secondary h-8 text-[12.5px]"
-                  >
-                    iCal-Text auslesen
-                  </button>
-                )}
-              </div>
-
-              {icsMessage && (
-                <p className="border-l-2 border-[var(--accent)] pl-3 py-0.5 text-[13px] text-[var(--text-primary)]">
-                  {icsMessage}
-                </p>
-              )}
-
-              {parsedIcsEvents.length > 0 && (
-                <div className="space-y-2.5 pt-3 border-t border-[var(--border-hairline)]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[13px] font-medium text-[var(--text-primary)]">
-                      Erkannte Termine ({parsedIcsEvents.filter((e) => e.selected).length}/
-                      {parsedIcsEvents.length})
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleCommitIcsEvents}
-                      className="btn-accent h-8 px-3 text-[12.5px]"
-                    >
-                      <Check size={14} strokeWidth={1.5} />
-                      Ausgewählte übernehmen
-                    </button>
-                  </div>
-
-                  <div className="divide-y divide-[var(--border-hairline)] max-h-56 overflow-y-auto">
-                    {parsedIcsEvents.map((ev) => (
-                      <label
-                        key={ev.uid}
-                        className="flex items-start gap-2.5 py-2.5 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={ev.selected}
-                          onChange={() =>
-                            setParsedIcsEvents((prev) =>
-                              prev.map((item) =>
-                                item.uid === ev.uid
-                                  ? { ...item, selected: !item.selected }
-                                  : item
-                              )
-                            )
-                          }
-                          className="mt-1 accent-[var(--accent)]"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[13.5px] font-medium text-[var(--text-primary)]">
-                            {ev.title}
-                          </div>
-                          <div className="text-[12px] text-[var(--text-muted)] font-mono-num">
-                            {ev.date} · {ev.courseTitle}
-                          </div>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
+          {/* 1. Einfacher Schulportal-Link (1 Feld) */}
+          <section className="surface-card p-6 space-y-5">
+            <div className="space-y-1">
+              <h2 className="font-display font-normal text-[22px] leading-snug text-[var(--text-primary)]">
+                Schulportal
+              </h2>
+              <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
+                Öffne dein Schul- oder Uni-Portal normal im Browser und melde dich mit deinem eigenen Konto an. Hermes liest anschliessend die nächsten 30 Tage vom geteilten Fenster direkt in deinen Prüfungsplan ein.
+              </p>
             </div>
 
-            {/* Right Card: Stoff- & Lehrplan-Import */}
-            <form
-              onSubmit={handleRunSmartSyllabusImport}
-              className="surface-card p-6 space-y-4"
-            >
-              <div className="space-y-1">
-                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)] inline-flex items-center gap-2">
-                  <GraduationCap
-                    size={18}
-                    strokeWidth={1.5}
-                    className="text-[var(--accent)]"
-                  />
-                  Stoff- & Lehrplan-Import
-                </h2>
-                <p className="text-[13.5px] text-[var(--text-secondary)]">
-                  Erzeugt aus Skripten oder PDF-Auszügen direkt einen Kurs mit Lernzielen, strukturierter Notizseite und Starter-Karten.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1 sm:col-span-2">
-                  <label
-                    htmlFor="smart-course-title"
-                    className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
-                  >
-                    Kurs- oder Fachname
-                  </label>
-                  <input
-                    id="smart-course-title"
-                    type="text"
-                    value={importCourseTitle}
-                    onChange={(e) => setImportCourseTitle(e.target.value)}
-                    placeholder="z. B. Physik — Mechanik & Energie"
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label
-                    htmlFor="smart-course-category"
-                    className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
-                  >
-                    Fachbereich
-                  </label>
-                  <select
-                    id="smart-course-category"
-                    value={importCategory}
-                    onChange={(e) =>
-                      setImportCategory(e.target.value as SubjectCourse['category'])
-                    }
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
-                  >
-                    <option
-                      value="science"
-                      style={{
-                        backgroundColor: 'var(--bg-card)',
-                        color: 'var(--text-primary)',
-                      }}
-                    >
-                      Naturwissenschaften & Mathe
-                    </option>
-                    <option
-                      value="language"
-                      style={{
-                        backgroundColor: 'var(--bg-card)',
-                        color: 'var(--text-primary)',
-                      }}
-                    >
-                      Sprachen
-                    </option>
-                    <option
-                      value="humanities"
-                      style={{
-                        backgroundColor: 'var(--bg-card)',
-                        color: 'var(--text-primary)',
-                      }}
-                    >
-                      Gesellschaft & Geisteswiss.
-                    </option>
-                    <option
-                      value="custom"
-                      style={{
-                        backgroundColor: 'var(--bg-card)',
-                        color: 'var(--text-primary)',
-                      }}
-                    >
-                      Eigener Kurs
-                    </option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label
-                    htmlFor="smart-exam-date"
-                    className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
-                  >
-                    Prüfungsdatum (optional)
-                  </label>
-                  <input
-                    id="smart-exam-date"
-                    type="date"
-                    value={importExamDate}
-                    onChange={(e) => setImportExamDate(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label
-                    htmlFor="smart-syllabus-text"
-                    className="text-[12.5px] font-medium text-[var(--text-secondary)]"
-                  >
-                    Lernziele, Skript oder kopierter PDF-Text
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      ref={syllabusFileInputRef}
-                      type="file"
-                      accept=".txt,.md,.markdown"
-                      onChange={(e) => {
-                        void handleSyllabusFileUpload(e.target.files);
-                        e.target.value = '';
-                      }}
-                      className="hidden"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => syllabusFileInputRef.current?.click()}
-                      className="btn-ghost h-7 px-2 text-[12px]"
-                    >
-                      <FileUp size={13} strokeWidth={1.5} />
-                      .txt / .md laden
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setImportCourseTitle('Physik — Mechanik & Energie');
-                        setImportCategory('science');
-                        setSyllabusText(SAMPLE_SYLLABUS);
-                      }}
-                      className="btn-ghost h-7 px-2 text-[12px]"
-                    >
-                      Beispielstoff einfügen
-                    </button>
-                  </div>
-                </div>
-
-                <textarea
-                  id="smart-syllabus-text"
-                  rows={6}
-                  value={syllabusText}
-                  onChange={(e) => setSyllabusText(e.target.value)}
-                  placeholder="Lernziele als Aufzählung, Definitionen im Format «Begriff: Erklärung» oder Text aus einem PDF-Arbeitsblatt einfügen..."
-                  className="w-full p-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+            <div className="flex flex-col lg:flex-row lg:items-end gap-3">
+              <div className="flex-1 space-y-1.5 min-w-0">
+                <label
+                  htmlFor="school-portal-url-input"
+                  className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
+                >
+                  Schulportal-Link (nur lokal im Browser gespeichert)
+                </label>
+                <input
+                  id="school-portal-url-input"
+                  type="url"
+                  value={state.provider.schoolPortalUrl}
+                  onChange={(e) => {
+                    onUpdateProvider({ schoolPortalUrl: e.target.value });
+                    if (portalMessage) setPortalMessage(null);
+                  }}
+                  placeholder="https://portal.schule.example"
+                  className="w-full h-10 px-3.5 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[12px] text-[var(--text-muted)]">
-                  Hinweis: «Begriff: Erklärung» wird automatisch als Karteikarte erkannt.
-                </span>
-                <button type="submit" className="btn-accent">
-                  <Layers size={15} strokeWidth={1.5} />
-                  Kurs, Notiz & Karten erstellen
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleOpenSchoolPortal}
+                  className="btn-accent h-10 px-4 text-[13.5px]"
+                >
+                  <ExternalLink size={15} strokeWidth={1.5} />
+                  <span>Portal öffnen &amp; anmelden</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTriggerHermesPortalScan}
+                  className="btn-secondary h-10 px-4 text-[13.5px]"
+                >
+                  <MonitorPlay size={15} strokeWidth={1.5} />
+                  <span>Mit Hermes 30 Tage einlesen</span>
                 </button>
               </div>
+            </div>
 
-              {syllabusResult && (
-                <div className="border-l-2 border-[var(--positive)] pl-3 py-1 text-[13px] text-[var(--positive)] flex items-center justify-between gap-2">
-                  <span>{syllabusResult}</span>
-                  <button
-                    type="button"
-                    onClick={() => setSyllabusResult(null)}
-                    aria-label="Meldung schliessen"
-                    className="p-0.5 cursor-pointer"
-                  >
-                    <X size={14} strokeWidth={1.5} />
-                  </button>
-                </div>
-              )}
-            </form>
-          </div>
+            {portalMessage && (
+              <p className="border-l-2 border-[var(--accent-warm)] pl-3 py-0.5 text-[13px] text-[var(--text-primary)]">
+                {portalMessage}
+              </p>
+            )}
+          </section>
 
-          {/* Upcoming School Schedule Timeline */}
-          <div className="surface-card p-6 space-y-4">
-            <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--border-hairline)] pb-4">
-              <div>
-                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)]">
-                  Anstehende Prüfungen & Termine{' '}
-                  <span className="font-mono-num text-[14px] text-[var(--text-muted)]">
-                    ({sortedSchedule.length})
-                  </span>
+          {/* 2. Hermes Auto-Sync (Hintergrund-Cron) */}
+          <section className="surface-card p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+              <div className="space-y-1">
+                <h2 className="font-display font-normal text-[22px] leading-snug text-[var(--text-primary)]">
+                  Hermes Auto-Sync
                 </h2>
-                <p className="text-[13px] text-[var(--text-secondary)]">
-                  Chronologische Übersicht aus .ics-Kalendern, Stoff-Importen und manuellen Einträgen.
+                <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
+                  Synchronisiert Obsidian-Notizen, OneNote-Seiten und anstehende Termine der nächsten 30 Tage im Hintergrund.
                 </p>
               </div>
+
+              <div className="flex items-center gap-3 shrink-0 self-start">
+                <span className="text-[13px] font-medium text-[var(--text-primary)]">
+                  Automatisch im Hintergrund scannen
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={state.provider.autoSyncEnabled}
+                  aria-label="Automatisch im Hintergrund scannen"
+                  disabled={syncSavingConfig}
+                  onClick={() => void handleToggleAutoSync()}
+                  className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors cursor-pointer"
+                  style={{
+                    backgroundColor: state.provider.autoSyncEnabled
+                      ? 'var(--accent)'
+                      : 'var(--bg-raised)',
+                    border: '1px solid var(--border-strong)',
+                  }}
+                >
+                  <span
+                    className="inline-block h-3.5 w-3.5 rounded-full transition-transform"
+                    style={{
+                      backgroundColor: state.provider.autoSyncEnabled
+                        ? 'var(--accent-ink)'
+                        : 'var(--text-muted)',
+                      transform: state.provider.autoSyncEnabled
+                        ? 'translateX(17px)'
+                        : 'translateX(2px)',
+                    }}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {/* Interval Selector Pills & Run Now Button */}
+            <div
+              className="border-t pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
+              <div
+                className="flex flex-wrap items-center gap-2"
+                role="radiogroup"
+                aria-label="Synchronisationsintervall"
+              >
+                {AUTO_SYNC_INTERVALS.map((opt) => {
+                  const selected =
+                    (state.provider.autoSyncIntervalMinutes || 60) === opt.minutes;
+                  return (
+                    <button
+                      key={opt.minutes}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => void handleSelectAutoSyncInterval(opt.minutes)}
+                      className="h-8 px-3.5 rounded-full text-[13px] font-medium border transition-colors cursor-pointer"
+                      style={{
+                        backgroundColor: selected
+                          ? 'var(--accent-soft)'
+                          : 'transparent',
+                        borderColor: selected
+                          ? 'var(--accent-border)'
+                          : 'var(--border-hairline)',
+                        color: selected
+                          ? 'var(--accent)'
+                          : 'var(--text-secondary)',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               <button
                 type="button"
-                onClick={() => setShowManualEventForm((v) => !v)}
-                className="btn-secondary h-8 px-3 text-[12.5px]"
+                onClick={() => void handleRunSyncNow()}
+                disabled={syncRunning}
+                className="btn-accent h-9 px-4 text-[13px] shrink-0 self-start sm:self-center"
               >
-                <Plus size={14} strokeWidth={1.5} />
-                Termin manuell eintragen
+                <RefreshCw
+                  size={14}
+                  strokeWidth={1.5}
+                  className={syncRunning ? 'animate-spin' : ''}
+                />
+                <span>
+                  {syncRunning ? 'Synchronisiere...' : 'Jetzt synchronisieren'}
+                </span>
               </button>
             </div>
 
-            {showManualEventForm && (
-              <form
-                onSubmit={handleAddManualScheduleItem}
-                className="pb-4 border-b border-[var(--border-hairline)] grid grid-cols-1 sm:grid-cols-[1fr_180px_160px_auto] gap-2.5 items-end"
-              >
-                <div className="space-y-1">
-                  <label className="text-[12px] text-[var(--text-secondary)]">
-                    Titel
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={manualTitle}
-                    onChange={(e) => setManualTitle(e.target.value)}
-                    placeholder="z. B. Chemie Klausur: Säuren & Basen"
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[12px] text-[var(--text-secondary)]">
-                    Fach
-                  </label>
-                  <input
-                    type="text"
-                    value={manualCourse}
-                    onChange={(e) => setManualCourse(e.target.value)}
-                    placeholder="z. B. Chemie"
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[12px] text-[var(--text-secondary)]">
-                    Datum
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={manualDate}
-                    onChange={(e) => setManualDate(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
-                  />
-                </div>
-                <button type="submit" className="btn-accent h-9 px-3.5 text-[13px]">
-                  Hinzufügen
+            {syncMessage && (
+              <div className="border-l-2 border-[var(--accent)] pl-3.5 py-0.5 text-[13px] text-[var(--text-primary)] flex items-center justify-between gap-2">
+                <span>{syncMessage}</span>
+                <button
+                  type="button"
+                  onClick={() => setSyncMessage(null)}
+                  aria-label="Meldung schliessen"
+                  className="p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <X size={14} strokeWidth={1.5} />
                 </button>
-              </form>
+              </div>
             )}
+
+            {/* Crisp Status Line */}
+            <div
+              className="border-t pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[12.5px]"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
+              <span className="text-[var(--text-secondary)]">
+                Zuletzt synchronisiert:{' '}
+                <span className="font-mono-num text-[var(--text-primary)]">
+                  {formatShortDateTime(state.provider.lastAutoSyncAt)}
+                </span>
+              </span>
+
+              <div className="flex flex-wrap items-center gap-2 font-mono-num text-[var(--text-muted)]">
+                <span>Obsidian: {displayedObsidianCount}</span>
+                <span className="text-[var(--border-strong)]">·</span>
+                <span>OneNote: {displayedOneNoteCount}</span>
+                <span className="text-[var(--border-strong)]">·</span>
+                <span>Nächste 30 Tage: {displayedUpcoming30Count}</span>
+              </div>
+            </div>
+          </section>
+
+          {/* Upcoming Schedule Timeline */}
+          <section className="surface-card p-6 space-y-4">
+            <div
+              className="flex flex-wrap items-baseline justify-between gap-2 border-b pb-3.5"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
+              <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)]">
+                Anstehende Prüfungen &amp; Termine{' '}
+                <span className="font-mono-num text-[14px] text-[var(--text-muted)]">
+                  ({sortedSchedule.length})
+                </span>
+              </h2>
+              <span className="text-[12.5px] text-[var(--text-muted)]">
+                Übersicht aus Hermes, Auto-Sync und Importen
+              </span>
+            </div>
 
             {sortedSchedule.length === 0 ? (
               <p className="text-[13.5px] text-[var(--text-muted)] py-4 text-center">
-                Noch keine Termine eingetragen. Lade oben eine .ics-Datei hoch oder trage einen Termin ein.
+                Noch keine Termine eingetragen. Lies die nächsten 30 Tage mit Hermes ein oder öffne unten weitere Import-Formate.
               </p>
             ) : (
               <div className="divide-y divide-[var(--border-hairline)]">
@@ -1793,7 +2529,7 @@ export function ObsidianAndImportHub({
                     item.source === 'ics'
                       ? 'Kalender .ics'
                       : item.source === 'smart-import'
-                        ? 'Stoff-Import'
+                        ? 'Portal / Sync'
                         : 'Manuell';
 
                   return (
@@ -1816,14 +2552,8 @@ export function ObsidianAndImportHub({
                       </div>
 
                       <span
-                        className="self-start sm:self-center shrink-0 px-2.5 py-0.5 rounded-full text-[12px] font-medium font-mono-num"
+                        className="self-start sm:self-center shrink-0 text-[12px] font-medium font-mono-num"
                         style={{
-                          backgroundColor:
-                            countdown.tone === 'warning'
-                              ? 'var(--accent-warm-soft)'
-                              : countdown.tone === 'accent'
-                                ? 'var(--accent-soft)'
-                                : 'var(--bg-raised)',
                           color:
                             countdown.tone === 'warning'
                               ? 'var(--accent-warm)'
@@ -1839,7 +2569,425 @@ export function ObsidianAndImportHub({
                 })}
               </div>
             )}
-          </div>
+          </section>
+
+          {/* 3. Collapsed <details>: Weitere Import-Formate (.ics, Stoffplan & manueller Termin) */}
+          <details className="surface-card overflow-hidden group">
+            <summary className="px-6 py-4 cursor-pointer select-none flex items-center justify-between gap-3 text-[14px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] list-none">
+              <span>
+                Weitere Import-Formate (.ics Kalender, Stoffplan-Text &amp; manueller Termin)
+              </span>
+              <ChevronDown
+                size={16}
+                strokeWidth={1.5}
+                className="shrink-0 text-[var(--text-muted)] transition-transform group-open:rotate-180"
+              />
+            </summary>
+
+            <div
+              className="px-6 pb-6 pt-5 border-t space-y-8"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
+              {/* A: Manueller Termin */}
+              <div className="space-y-3">
+                <div className="space-y-0.5">
+                  <h3 className="font-display font-normal text-[19px] text-[var(--text-primary)] inline-flex items-center gap-2">
+                    <Plus size={16} strokeWidth={1.5} className="text-[var(--accent)]" />
+                    Manueller Termin
+                  </h3>
+                  <p className="text-[13px] text-[var(--text-secondary)]">
+                    Einzelne Prüfung oder Abgabe direkt in den Prüfungsplan aufnehmen.
+                  </p>
+                </div>
+
+                <form
+                  onSubmit={handleAddManualScheduleItem}
+                  className="grid grid-cols-1 sm:grid-cols-[1fr_180px_160px_auto] gap-2.5 items-end"
+                >
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="manual-event-title"
+                      className="text-[12px] text-[var(--text-secondary)]"
+                    >
+                      Titel
+                    </label>
+                    <input
+                      id="manual-event-title"
+                      type="text"
+                      required
+                      value={manualTitle}
+                      onChange={(e) => setManualTitle(e.target.value)}
+                      placeholder="z. B. Chemie Klausur: Säuren & Basen"
+                      className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="manual-event-course"
+                      className="text-[12px] text-[var(--text-secondary)]"
+                    >
+                      Fach
+                    </label>
+                    <input
+                      id="manual-event-course"
+                      type="text"
+                      value={manualCourse}
+                      onChange={(e) => setManualCourse(e.target.value)}
+                      placeholder="z. B. Chemie"
+                      className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="manual-event-date"
+                      className="text-[12px] text-[var(--text-secondary)]"
+                    >
+                      Datum
+                    </label>
+                    <input
+                      id="manual-event-date"
+                      type="date"
+                      required
+                      value={manualDate}
+                      onChange={(e) => setManualDate(e.target.value)}
+                      className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
+                    />
+                  </div>
+                  <button type="submit" className="btn-accent h-9 px-3.5 text-[13px]">
+                    Hinzufügen
+                  </button>
+                </form>
+
+                {manualMessage && (
+                  <p className="border-l-2 border-[var(--positive)] pl-3 py-0.5 text-[13px] text-[var(--positive)]">
+                    {manualMessage}
+                  </p>
+                )}
+              </div>
+
+              {/* B: .ics Kalender-Import */}
+              <div
+                className="border-t pt-6 space-y-4"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="space-y-0.5">
+                  <h3 className="font-display font-normal text-[19px] text-[var(--text-primary)] inline-flex items-center gap-2">
+                    <Calendar
+                      size={16}
+                      strokeWidth={1.5}
+                      className="text-[var(--accent)]"
+                    />
+                    .ics Kalender-Import
+                  </h3>
+                  <p className="text-[13px] text-[var(--text-secondary)]">
+                    Lade eine .ics-Datei hoch oder füge iCal-Text ein. Alle Termine werden lokal im Browser ausgelesen.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={icsFileInputRef}
+                    type="file"
+                    accept=".ics,.ical,text/calendar"
+                    onChange={(e) => {
+                      void handleIcsFileUpload(e.target.files);
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => icsFileInputRef.current?.click()}
+                    className="btn-secondary h-9 text-[13px]"
+                  >
+                    <Upload size={15} strokeWidth={1.5} />
+                    .ics-Datei wählen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleParseIcsInput(SAMPLE_ICS)}
+                    className="btn-ghost h-9 text-[13px]"
+                  >
+                    Beispiel-Kalender testen
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="ics-textarea"
+                    className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
+                  >
+                    Oder iCal-Text direkt einfügen
+                  </label>
+                  <textarea
+                    id="ics-textarea"
+                    rows={4}
+                    value={icsRawText}
+                    onChange={(e) => setIcsRawText(e.target.value)}
+                    placeholder="BEGIN:VCALENDAR&#10;BEGIN:VEVENT&#10;DTSTART;VALUE=DATE:20261215&#10;SUMMARY:Biologie Test: Genetik&#10;END:VEVENT&#10;END:VCALENDAR"
+                    className="w-full p-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] font-mono-num text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                  />
+                  {icsRawText.trim() && parsedIcsEvents.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleParseIcsInput(icsRawText)}
+                      className="btn-secondary h-8 text-[12.5px]"
+                    >
+                      iCal-Text auslesen
+                    </button>
+                  )}
+                </div>
+
+                {icsMessage && (
+                  <p className="border-l-2 border-[var(--accent)] pl-3 py-0.5 text-[13px] text-[var(--text-primary)]">
+                    {icsMessage}
+                  </p>
+                )}
+
+                {parsedIcsEvents.length > 0 && (
+                  <div
+                    className="space-y-2.5 pt-3 border-t"
+                    style={{ borderColor: 'var(--border-hairline)' }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[13px] font-medium text-[var(--text-primary)]">
+                        Erkannte Termine (
+                        {parsedIcsEvents.filter((e) => e.selected).length}/
+                        {parsedIcsEvents.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCommitIcsEvents}
+                        className="btn-accent h-8 px-3 text-[12.5px]"
+                      >
+                        <Check size={14} strokeWidth={1.5} />
+                        Ausgewählte übernehmen
+                      </button>
+                    </div>
+
+                    <div className="divide-y divide-[var(--border-hairline)] max-h-56 overflow-y-auto">
+                      {parsedIcsEvents.map((ev) => (
+                        <label
+                          key={ev.uid}
+                          className="flex items-start gap-2.5 py-2.5 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={ev.selected}
+                            onChange={() =>
+                              setParsedIcsEvents((prev) =>
+                                prev.map((item) =>
+                                  item.uid === ev.uid
+                                    ? { ...item, selected: !item.selected }
+                                    : item
+                                )
+                              )
+                            }
+                            className="mt-1 accent-[var(--accent)]"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13.5px] font-medium text-[var(--text-primary)]">
+                              {ev.title}
+                            </div>
+                            <div className="text-[12px] text-[var(--text-muted)] font-mono-num">
+                              {ev.date} · {ev.courseTitle}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* C: Stoffplan- & Lehrplan-Text */}
+              <form
+                onSubmit={handleRunSmartSyllabusImport}
+                className="border-t pt-6 space-y-4"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="space-y-0.5">
+                  <h3 className="font-display font-normal text-[19px] text-[var(--text-primary)] inline-flex items-center gap-2">
+                    <GraduationCap
+                      size={17}
+                      strokeWidth={1.5}
+                      className="text-[var(--accent)]"
+                    />
+                    Stoffplan- &amp; Lehrplan-Text
+                  </h3>
+                  <p className="text-[13px] text-[var(--text-secondary)]">
+                    Erzeugt aus Skripten oder PDF-Auszügen direkt einen Kurs mit Lernzielen, strukturierter Notizseite und Starter-Karten.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="smart-course-title"
+                      className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
+                    >
+                      Kurs- oder Fachname
+                    </label>
+                    <input
+                      id="smart-course-title"
+                      type="text"
+                      value={importCourseTitle}
+                      onChange={(e) => setImportCourseTitle(e.target.value)}
+                      placeholder="z. B. Physik — Mechanik & Energie"
+                      className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="smart-course-category"
+                      className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
+                    >
+                      Fachbereich
+                    </label>
+                    <select
+                      id="smart-course-category"
+                      value={importCategory}
+                      onChange={(e) =>
+                        setImportCategory(
+                          e.target.value as SubjectCourse['category']
+                        )
+                      }
+                      className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
+                    >
+                      <option
+                        value="science"
+                        style={{
+                          backgroundColor: 'var(--bg-card)',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        Naturwissenschaften &amp; Mathe
+                      </option>
+                      <option
+                        value="language"
+                        style={{
+                          backgroundColor: 'var(--bg-card)',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        Sprachen
+                      </option>
+                      <option
+                        value="humanities"
+                        style={{
+                          backgroundColor: 'var(--bg-card)',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        Gesellschaft &amp; Geisteswiss.
+                      </option>
+                      <option
+                        value="custom"
+                        style={{
+                          backgroundColor: 'var(--bg-card)',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        Eigener Kurs
+                      </option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="smart-exam-date"
+                      className="block text-[12.5px] font-medium text-[var(--text-secondary)]"
+                    >
+                      Prüfungsdatum (optional)
+                    </label>
+                    <input
+                      id="smart-exam-date"
+                      type="date"
+                      value={importExamDate}
+                      onChange={(e) => setImportExamDate(e.target.value)}
+                      className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label
+                      htmlFor="smart-syllabus-text"
+                      className="text-[12.5px] font-medium text-[var(--text-secondary)]"
+                    >
+                      Lernziele, Skript oder kopierter PDF-Text
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        ref={syllabusFileInputRef}
+                        type="file"
+                        accept=".txt,.md,.markdown"
+                        onChange={(e) => {
+                          void handleSyllabusFileUpload(e.target.files);
+                          e.target.value = '';
+                        }}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => syllabusFileInputRef.current?.click()}
+                        className="btn-ghost h-7 px-2 text-[12px]"
+                      >
+                        <FileUp size={13} strokeWidth={1.5} />
+                        .txt / .md laden
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportCourseTitle('Physik — Mechanik & Energie');
+                          setImportCategory('science');
+                          setSyllabusText(SAMPLE_SYLLABUS);
+                        }}
+                        className="btn-ghost h-7 px-2 text-[12px]"
+                      >
+                        Beispielstoff einfügen
+                      </button>
+                    </div>
+                  </div>
+
+                  <textarea
+                    id="smart-syllabus-text"
+                    rows={5}
+                    value={syllabusText}
+                    onChange={(e) => setSyllabusText(e.target.value)}
+                    placeholder="Lernziele als Aufzählung, Definitionen im Format «Begriff: Erklärung» oder Text aus einem PDF-Arbeitsblatt einfügen..."
+                    className="w-full p-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12px] text-[var(--text-muted)]">
+                    Hinweis: «Begriff: Erklärung» wird automatisch als Karteikarte erkannt.
+                  </span>
+                  <button type="submit" className="btn-accent h-9 px-4 text-[13px]">
+                    <Layers size={15} strokeWidth={1.5} />
+                    Kurs, Notiz &amp; Karten erstellen
+                  </button>
+                </div>
+
+                {syllabusResult && (
+                  <div className="border-l-2 border-[var(--positive)] pl-3 py-1 text-[13px] text-[var(--positive)] flex items-center justify-between gap-2">
+                    <span>{syllabusResult}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSyllabusResult(null)}
+                      aria-label="Meldung schliessen"
+                      className="p-0.5 cursor-pointer"
+                    >
+                      <X size={14} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                )}
+              </form>
+            </div>
+          </details>
         </div>
       )}
 
@@ -1856,7 +3004,7 @@ export function ObsidianAndImportHub({
                 Notion Markdown-Export importieren
               </h2>
               <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
-                Wähle in Notion «Exportieren → Markdown & CSV» und ziehe die entpackten .md-Dateien hier hinein. Notion-ID-Endungen im Dateinamen werden automatisch bereinigt.
+                Wähle in Notion «Exportieren → Markdown &amp; CSV» und ziehe die entpackten .md-Dateien hier hinein. Notion-ID-Endungen im Dateinamen werden automatisch bereinigt.
               </p>
             </div>
 

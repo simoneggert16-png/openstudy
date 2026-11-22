@@ -1,4 +1,4 @@
-import { GoogleGenAI, LiveServerMessage, Modality, Session } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, MediaResolution, Modality, Session } from '@google/genai';
 import {
   ObsidianNote,
   ResponseDepth,
@@ -51,6 +51,7 @@ export interface OpenStudyVoiceConnectOptions {
   pace: SpeechPace;
   systemPrompt: string;
   tools?: Array<{ functionDeclarations: unknown[] }>;
+  highResVision?: boolean;
 }
 
 export const PACE_PLAYBACK_RATE: Record<SpeechPace, number> = {
@@ -974,6 +975,9 @@ export class OpenStudyVoiceClient {
           model,
           config: {
             responseModalities: [Modality.AUDIO],
+            ...(options.highResVision
+              ? { mediaResolution: MediaResolution.MEDIA_RESOLUTION_HIGH }
+              : {}),
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {

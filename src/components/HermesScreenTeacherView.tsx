@@ -28,6 +28,7 @@ import {
   HermesToolExecution,
   MainView,
   OpenStudyState,
+  SchoolScheduleItem,
   ScreenSpotlight,
   StudyCard,
   StudyNotePage,
@@ -57,6 +58,7 @@ export interface HermesScreenTeacherViewProps {
   onUpsertNote: (page: StudyNotePage) => void;
   onAddCards: (cards: StudyCard[]) => void;
   onAddPlanTasks: (tasks: DailyPlanTask[]) => void;
+  onAddSchoolScheduleItems?: (items: SchoolScheduleItem[]) => void;
   onAddHermesMemory: (entry: HermesMemoryEntry) => void;
   onRemoveHermesMemory: (id: string) => void;
   onUpsertHermesSkill: (skill: HermesSkill) => void;
@@ -67,6 +69,8 @@ export interface HermesScreenTeacherViewProps {
   onUpdateVoice: (patch: Partial<VoicePreferences>) => void;
   onOpenSettings: () => void;
   onOpenOnboarding: () => void;
+  initialPrompt?: string | null;
+  onConsumeInitialPrompt?: () => void;
 }
 
 type StudioTab = 'chat' | 'skills' | 'memory';
@@ -111,8 +115,175 @@ const IDLE_TELEMETRY: AudioTelemetryLevels = {
   bars: Array.from({ length: 12 }, () => 0.08),
 };
 
+interface BrowserImageCaptureInstance {
+  grabFrame: () => Promise<ImageBitmap>;
+}
+
+interface BrowserImageCaptureConstructor {
+  new (track: MediaStreamTrack): BrowserImageCaptureInstance;
+}
+
+interface ScreenCropBox {
+  xMin: number;
+  yMin: number;
+  xMax: number;
+  yMax: number;
+}
+
+interface CapturedFrameResult {
+  base64: string;
+  width: number;
+  height: number;
+  source: 'windows-bridge' | 'screen-share';
+}
+
+const TOOL_DISPLAY_LABELS: Record<string, string> = {
+  inspect_screen_detail: 'HD-Bildschirmprüfung',
+  highlight_screen_region: 'Bildschirm-Marker',
+  clear_screen_highlights: 'Marker geleert',
+  create_study_note: 'Lernnotiz',
+  create_flashcards: 'Karteikarten',
+  add_daily_plan_tasks: 'Tagesplan',
+  add_school_schedule: 'Prüfungskalender ergänzt',
+  navigate_app: 'Ansicht gewechselt',
+  save_learning_memory: 'Gedächtnis',
+  save_custom_skill: 'SKILL.md',
+};
+
+function getToolDisplayLabel(toolName: string): string {
+  return TOOL_DISPLAY_LABELS[toolName] ?? toolName;
+}
+
 function clampPercent(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeCropPercent(
+  crop?: ScreenCropBox
+): { x: number; y: number; w: number; h: number } | null {
+  if (!crop) return null;
+  if (
+    !Number.isFinite(crop.xMin) ||
+    !Number.isFinite(crop.yMin) ||
+    !Number.isFinite(crop.xMax) ||
+    !Number.isFinite(crop.yMax)
+  ) {
+    return null;
+  }
+  const x1 = clampPercent(Math.min(crop.xMin, crop.xMax), 0, 99);
+  const y1 = clampPercent(Math.min(crop.yMin, crop.yMax), 0, 99);
+  const x2 = clampPercent(Math.max(crop.xMin, crop.xMax), x1 + 1, 100);
+  const y2 = clampPercent(Math.max(crop.yMin, crop.yMax), y1 + 1, 100);
+  return {
+    x: x1,
+    y: y1,
+    w: Math.max(1, x2 - x1),
+    h: Math.max(1, y2 - y1),
+  };
+}
+
+/**
+ * Unthrottled interval ticker backed by an inline Web Worker so Chrome/Edge
+ * never throttle live frame capture when this tab is occluded behind desktop apps.
+ */
+function createUnthrottledTicker(intervalMs: number, onTick: () => void): () => void {
+  const safeMs = Math.max(100, Math.round(intervalMs));
+  let fallbackTimerId: number | null = null;
+  let stopped = false;
+
+  const startFallback = () => {
+    if (stopped || fallbackTimerId !== null) return;
+    fallbackTimerId = window.setInterval(() => {
+      if (!stopped) onTick();
+    }, safeMs);
+  };
+
+  if (
+    typeof Worker !== 'undefined' &&
+    typeof Blob !== 'undefined' &&
+    typeof URL !== 'undefined' &&
+    typeof URL.createObjectURL === 'function'
+  ) {
+    let worker: Worker | null = null;
+    let objectUrl: string | null = null;
+    try {
+      const workerSource = `
+        const id = setInterval(() => { self.postMessage('tick'); }, ${safeMs});
+        self.onmessage = (e) => {
+          if (e.data === 'stop') {
+            clearInterval(id);
+            self.close();
+          }
+        };
+      `;
+      const blob = new Blob([workerSource], { type: 'application/javascript' });
+      objectUrl = URL.createObjectURL(blob);
+      worker = new Worker(objectUrl);
+      worker.onmessage = () => {
+        if (!stopped) onTick();
+      };
+      worker.onerror = () => {
+        if (worker) {
+          try {
+            worker.terminate();
+          } catch {
+            // ignore
+          }
+          worker = null;
+        }
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+        }
+        startFallback();
+      };
+
+      return () => {
+        stopped = true;
+        if (worker) {
+          try {
+            worker.postMessage('stop');
+          } catch {
+            // ignore
+          }
+          try {
+            worker.terminate();
+          } catch {
+            // ignore
+          }
+          worker = null;
+        }
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+        }
+        if (fallbackTimerId !== null) {
+          window.clearInterval(fallbackTimerId);
+          fallbackTimerId = null;
+        }
+      };
+    } catch {
+      if (worker) {
+        try {
+          worker.terminate();
+        } catch {
+          // ignore
+        }
+      }
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
+  }
+
+  startFallback();
+  return () => {
+    stopped = true;
+    if (fallbackTimerId !== null) {
+      window.clearInterval(fallbackTimerId);
+      fallbackTimerId = null;
+    }
+  };
 }
 
 function formatClockTime(isoOrMs: string | number): string {
@@ -121,6 +292,15 @@ function formatClockTime(isoOrMs: string | number): string {
   const hh = String(date.getHours()).padStart(2, '0');
   const mm = String(date.getMinutes()).padStart(2, '0');
   return `${hh}:${mm}`;
+}
+
+function formatClockSeconds(ms: number): string {
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return '';
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
 }
 
 function makeSlug(raw: string): string {
@@ -140,6 +320,7 @@ function getToolNavigationTarget(toolName: string): { view: MainView; label: str
   if (toolName === 'create_study_note') return { view: 'notes', label: 'Notizen öffnen' };
   if (toolName === 'create_flashcards') return { view: 'trainer', label: 'Karten üben' };
   if (toolName === 'add_daily_plan_tasks') return { view: 'focus', label: 'Planer öffnen' };
+  if (toolName === 'add_school_schedule') return { view: 'home', label: 'Übersicht öffnen' };
   return null;
 }
 
@@ -169,6 +350,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
   onUpsertNote,
   onAddCards,
   onAddPlanTasks,
+  onAddSchoolScheduleItems,
   onAddHermesMemory,
   onRemoveHermesMemory,
   onUpsertHermesSkill,
@@ -179,6 +361,8 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
   onUpdateVoice,
   onOpenSettings,
   onOpenOnboarding,
+  initialPrompt,
+  onConsumeInitialPrompt,
 }) => {
   const [studioTab, setStudioTab] = useState<StudioTab>('chat');
 
@@ -186,7 +370,14 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
   const [isSharingScreen, setIsSharingScreen] = useState<boolean>(false);
   const [screenError, setScreenError] = useState<string | null>(null);
   const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
+  const [lastFrameTime, setLastFrameTime] = useState<number | null>(null);
+  const [isInspectingHd, setIsInspectingHd] = useState<boolean>(false);
   const screenStreamRef = useRef<MediaStream | null>(null);
+  const imageCaptureRef = useRef<{
+    track: MediaStreamTrack;
+    instance: BrowserImageCaptureInstance;
+  } | null>(null);
+  const hdInspectionCountRef = useRef<number>(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -206,6 +397,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
   // Chat state (shared between main view and Floating PiP window)
   const [messages, setMessages] = useState<TeacherChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>('');
+  const [portalSyncBannerVisible, setPortalSyncBannerVisible] = useState<boolean>(false);
   const [pipInput, setPipInput] = useState<string>('');
   const [isAgentThinking, setIsAgentThinking] = useState<boolean>(false);
   const [agentError, setAgentError] = useState<string | null>(null);
@@ -242,7 +434,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
     [state.provider.bridgeUrl]
   );
 
-  // Keep fresh refs for async callbacks (Gemini Live tool calls & frame intervals)
+  // Keep fresh refs for async callbacks (Gemini Live tool calls & unthrottled frame workers)
   const stateRef = useRef<OpenStudyState>(state);
   stateRef.current = state;
 
@@ -251,6 +443,231 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
 
   const isSharingRef = useRef<boolean>(isSharingScreen);
   isSharingRef.current = isSharingScreen;
+
+  const bridgeOnlineRef = useRef<boolean>(bridgeOnline);
+  bridgeOnlineRef.current = bridgeOnline;
+
+  const normalizedBridgeUrlRef = useRef<string>(normalizedBridgeUrl);
+  normalizedBridgeUrlRef.current = normalizedBridgeUrl;
+
+  const beginHdInspection = useCallback(() => {
+    hdInspectionCountRef.current += 1;
+    setIsInspectingHd(true);
+  }, []);
+
+  const endHdInspection = useCallback(() => {
+    hdInspectionCountRef.current = Math.max(0, hdInspectionCountRef.current - 1);
+    if (hdInspectionCountRef.current === 0) {
+      setIsInspectingHd(false);
+    }
+  }, []);
+
+  // Hardware MediaStreamTrack frame capture (ImageCapture.grabFrame -> GPU ImageBitmap)
+  // with clean fallback to <video> so occluded background tabs never emit frozen frames.
+  const captureLiveStreamFrame = useCallback(
+    async (options?: {
+      maxWidth?: number;
+      quality?: number;
+      crop?: ScreenCropBox;
+    }): Promise<CapturedFrameResult | null> => {
+      const stream = screenStreamRef.current;
+      const canvas = canvasRef.current;
+      if (!stream || !canvas) return null;
+
+      const maxWidth = options?.maxWidth ?? 1440;
+      const quality = options?.quality ?? 0.84;
+      const normCrop = normalizeCropPercent(options?.crop);
+
+      const encodeSource = (
+        source: ImageBitmap | HTMLVideoElement,
+        srcW: number,
+        srcH: number
+      ): CapturedFrameResult | null => {
+        if (!srcW || !srcH) return null;
+
+        let sx = 0;
+        let sy = 0;
+        let sw = srcW;
+        let sh = srcH;
+        if (normCrop) {
+          sx = Math.round((normCrop.x / 100) * srcW);
+          sy = Math.round((normCrop.y / 100) * srcH);
+          sw = Math.max(1, Math.min(srcW - sx, Math.round((normCrop.w / 100) * srcW)));
+          sh = Math.max(1, Math.min(srcH - sy, Math.round((normCrop.h / 100) * srcH)));
+        }
+
+        const scale = sw > maxWidth ? maxWidth / sw : 1;
+        const targetW = Math.max(1, Math.round(sw * scale));
+        const targetH = Math.max(1, Math.round(sh * scale));
+
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          canvas.width = targetW;
+          canvas.height = targetH;
+        }
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(source, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        if (!dataUrl || !dataUrl.startsWith('data:image/jpeg;base64,')) {
+          return null;
+        }
+
+        if (!normCrop) {
+          setPreviewDataUrl(dataUrl);
+        }
+        setLastFrameTime(Date.now());
+
+        return {
+          base64: dataUrl.slice('data:image/jpeg;base64,'.length),
+          width: targetW,
+          height: targetH,
+          source: 'screen-share',
+        };
+      };
+
+      // Priority A: Direct hardware track grab via ImageCapture.grabFrame()
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack && videoTrack.readyState === 'live') {
+        const ImageCaptureCtor = (
+          window as unknown as { ImageCapture?: BrowserImageCaptureConstructor }
+        ).ImageCapture;
+
+        if (typeof ImageCaptureCtor === 'function') {
+          let bitmap: ImageBitmap | null = null;
+          try {
+            let captureInstance =
+              imageCaptureRef.current?.track === videoTrack
+                ? imageCaptureRef.current.instance
+                : null;
+            if (!captureInstance) {
+              captureInstance = new ImageCaptureCtor(videoTrack);
+              imageCaptureRef.current = { track: videoTrack, instance: captureInstance };
+            }
+            bitmap = await captureInstance.grabFrame();
+            const encoded = encodeSource(bitmap, bitmap.width, bitmap.height);
+            if (encoded) return encoded;
+          } catch {
+            if (imageCaptureRef.current?.track === videoTrack) {
+              imageCaptureRef.current = null;
+            }
+          } finally {
+            if (bitmap) {
+              try {
+                bitmap.close();
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      }
+
+      // Priority B: Fallback to mounted <video> element
+      const video = videoRef.current;
+      if (!video || video.readyState < 2) return null;
+      return encodeSource(video, video.videoWidth, video.videoHeight);
+    },
+    []
+  );
+
+  // Full-resolution HD frame grabber for inspect_screen_detail, "Bildschirm prüfen", and chat turns
+  const captureFreshFullResFrame = useCallback(
+    async (crop?: ScreenCropBox): Promise<CapturedFrameResult | null> => {
+      const normCrop = normalizeCropPercent(crop);
+      beginHdInspection();
+      try {
+        // Priority 1: Pixel-perfect native Windows DPI screenshot via Companion Bridge
+        if (bridgeOnlineRef.current) {
+          const controller = new AbortController();
+          const timeoutId = window.setTimeout(() => controller.abort(), 4500);
+          try {
+            const params = new URLSearchParams({
+              maxWidth: '1920',
+              quality: '90',
+            });
+            if (normCrop) {
+              params.set('x', String(Math.round(normCrop.x * 10) / 10));
+              params.set('y', String(Math.round(normCrop.y * 10) / 10));
+              params.set('w', String(Math.round(normCrop.w * 10) / 10));
+              params.set('h', String(Math.round(normCrop.h * 10) / 10));
+            }
+
+            const res = await fetch(
+              `${normalizedBridgeUrlRef.current}/api/desktop/screenshot?${params.toString()}`,
+              {
+                method: 'GET',
+                signal: controller.signal,
+              }
+            );
+
+            if (res.status === 403) {
+              // Respect local bridge privacy guard (password manager / banking / private window)
+              return null;
+            }
+
+            if (res.ok) {
+              const data = (await res.json().catch(() => null)) as {
+                ok?: boolean;
+                base64?: string;
+                width?: number;
+                height?: number;
+                mimeType?: string;
+                activeWindow?: string;
+              } | null;
+
+              if (data?.ok && typeof data.base64 === 'string' && data.base64.trim().length > 0) {
+                const rawBase64 = data.base64.includes(';base64,')
+                  ? data.base64.slice(data.base64.indexOf(';base64,') + ';base64,'.length)
+                  : data.base64.trim();
+                const mimeType =
+                  typeof data.mimeType === 'string' && data.mimeType.startsWith('image/')
+                    ? data.mimeType
+                    : 'image/jpeg';
+                const width =
+                  typeof data.width === 'number' && data.width > 0 ? data.width : 1920;
+                const height =
+                  typeof data.height === 'number' && data.height > 0 ? data.height : 1080;
+
+                if (!normCrop) {
+                  setPreviewDataUrl(`data:${mimeType};base64,${rawBase64}`);
+                }
+                if (typeof data.activeWindow === 'string' && data.activeWindow.trim()) {
+                  setActiveWindowTitle(data.activeWindow.trim().slice(0, 90));
+                }
+                setLastFrameTime(Date.now());
+
+                return {
+                  base64: rawBase64,
+                  width,
+                  height,
+                  source: 'windows-bridge',
+                };
+              }
+            }
+          } catch {
+            // Fall through cleanly to browser screen-share capture
+          } finally {
+            window.clearTimeout(timeoutId);
+          }
+        }
+
+        // Priority 2: Hardware MediaStreamTrack HD capture (1920px @ 0.90)
+        return await captureLiveStreamFrame({
+          maxWidth: 1920,
+          quality: 0.9,
+          crop,
+        });
+      } finally {
+        endHdInspection();
+      }
+    },
+    [beginHdInspection, endHdInspection, captureLiveStreamFrame]
+  );
 
   const toolHandlers = useMemo<HermesToolHandlers>(
     () => ({
@@ -269,6 +686,11 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
       onAddPlanTasks: (tasks) => {
         onAddPlanTasks(tasks);
       },
+      onAddSchoolScheduleItems: onAddSchoolScheduleItems
+        ? (items) => {
+            onAddSchoolScheduleItems(items);
+          }
+        : undefined,
       onNavigate: (view, courseId) => {
         if (courseId) {
           onSelectCourse(courseId);
@@ -284,6 +706,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
       onLogAction: (entry) => {
         onLogHermesAction(entry);
       },
+      captureFreshFullResFrame,
       bridgeUrl: bridgeOnline ? normalizedBridgeUrl : undefined,
       desktopOverlayEnabled: bridgeOnline && desktopOverlayEnabled,
     }),
@@ -293,11 +716,13 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
       onUpsertNote,
       onAddCards,
       onAddPlanTasks,
+      onAddSchoolScheduleItems,
       onSelectCourse,
       onNavigate,
       onAddHermesMemory,
       onUpsertHermesSkill,
       onLogHermesAction,
+      captureFreshFullResFrame,
       bridgeOnline,
       normalizedBridgeUrl,
       desktopOverlayEnabled,
@@ -320,14 +745,17 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
     };
   }, [normalizedBridgeUrl]);
 
-  // Poll active PC window every 3.5s while bridge is online AND sharing or PiP is open
+  // Poll active PC window every 3.5s via unthrottled worker while bridge is online AND sharing or PiP is open
   useEffect(() => {
     if (!bridgeOnline || (!isSharingScreen && !pip.isOpen)) {
       return;
     }
 
     let cancelled = false;
+    let inFlight = false;
     const pollActiveWindow = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
         const controller = new AbortController();
         const timer = window.setTimeout(() => controller.abort(), 1600);
@@ -346,55 +774,24 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
         }
       } catch {
         // Keep last known window silently if bridge poll times out
+      } finally {
+        inFlight = false;
       }
     };
 
     void pollActiveWindow();
-    const intervalId = window.setInterval(() => {
+    const stopTicker = createUnthrottledTicker(3500, () => {
       void pollActiveWindow();
-    }, 3500);
+    });
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      stopTicker();
     };
   }, [bridgeOnline, isSharingScreen, pip.isOpen, normalizedBridgeUrl]);
 
-  // Offscreen canvas frame grabber (<= 1024px wide, JPEG 0.72, stripped base64)
-  const captureCurrentFrameBase64 = useCallback((): string | null => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return null;
-    if (!screenStreamRef.current || video.readyState < 2) return null;
-
-    const srcW = video.videoWidth;
-    const srcH = video.videoHeight;
-    if (!srcW || !srcH) return null;
-
-    const maxWidth = 1024;
-    const scale = srcW > maxWidth ? maxWidth / srcW : 1;
-    const targetW = Math.max(1, Math.round(srcW * scale));
-    const targetH = Math.max(1, Math.round(srcH * scale));
-
-    if (canvas.width !== targetW || canvas.height !== targetH) {
-      canvas.width = targetW;
-      canvas.height = targetH;
-    }
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    ctx.drawImage(video, 0, 0, targetW, targetH);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
-    if (!dataUrl || !dataUrl.startsWith('data:image/jpeg;base64,')) {
-      return null;
-    }
-
-    setPreviewDataUrl(dataUrl);
-    return dataUrl.slice('data:image/jpeg;base64,'.length);
-  }, []);
-
   const stopScreenShare = useCallback(() => {
+    imageCaptureRef.current = null;
     const stream = screenStreamRef.current;
     screenStreamRef.current = null;
     if (stream) {
@@ -412,6 +809,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
     }
     setIsSharingScreen(false);
     setPreviewDataUrl(null);
+    setLastFrameTime(null);
   }, []);
 
   const startScreenShare = useCallback(async (): Promise<boolean> => {
@@ -426,8 +824,9 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
           frameRate: { ideal: 5, max: 10 },
-          width: { ideal: 1280 },
         },
         audio: false,
       });
@@ -449,9 +848,9 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
 
       setIsSharingScreen(true);
 
-      // Grab an initial preview snapshot shortly after playback starts
+      // Grab an initial crisp hardware preview snapshot shortly after playback starts
       window.setTimeout(() => {
-        captureCurrentFrameBase64();
+        void captureLiveStreamFrame({ maxWidth: 1440, quality: 0.84 });
       }, 320);
 
       return true;
@@ -467,33 +866,73 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
       }
       return false;
     }
-  }, [stopScreenShare, captureCurrentFrameBase64]);
+  }, [stopScreenShare, captureLiveStreamFrame]);
 
-  // Keep PiP preview refreshed while sharing screen and PiP is open
-  useEffect(() => {
-    if (!isSharingScreen || !pip.isOpen) return;
-    captureCurrentFrameBase64();
-    const timer = window.setInterval(() => {
-      captureCurrentFrameBase64();
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [isSharingScreen, pip.isOpen, captureCurrentFrameBase64]);
-
-  // Stream 1 JPEG frame every 1400ms into Gemini Live when BOTH screen share AND live voice are active
+  // Stream crisp 1440px hardware-captured frames every 1200ms via unthrottled Web Worker ticker
+  // when BOTH screen share AND Gemini Live voice are active (also updates PiP previewDataUrl).
   useEffect(() => {
     if (!isSharingScreen || liveState !== 'connected') return;
 
-    const pushFrame = () => {
-      const base64 = captureCurrentFrameBase64();
-      if (base64) {
-        voiceSessionRef.current?.sendVideoFrame(base64);
+    let cancelled = false;
+    let inFlight = false;
+
+    const pushFrame = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const frame = await captureLiveStreamFrame({
+          maxWidth: 1440,
+          quality: 0.84,
+        });
+        if (!cancelled && frame?.base64) {
+          voiceSessionRef.current?.sendVideoFrame(frame.base64);
+        }
+      } finally {
+        inFlight = false;
       }
     };
 
-    pushFrame();
-    const timer = window.setInterval(pushFrame, 1400);
-    return () => window.clearInterval(timer);
-  }, [isSharingScreen, liveState, captureCurrentFrameBase64]);
+    void pushFrame();
+    const stopTicker = createUnthrottledTicker(1200, () => {
+      void pushFrame();
+    });
+
+    return () => {
+      cancelled = true;
+      stopTicker();
+    };
+  }, [isSharingScreen, liveState, captureLiveStreamFrame]);
+
+  // Keep Floating PiP preview mirrored via unthrottled ticker when sharing screen without Live Voice
+  useEffect(() => {
+    if (!isSharingScreen || !pip.isOpen || liveState === 'connected') return;
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const refreshPreview = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        await captureLiveStreamFrame({
+          maxWidth: 1440,
+          quality: 0.84,
+        });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void refreshPreview();
+    const stopTicker = createUnthrottledTicker(1200, () => {
+      void refreshPreview();
+    });
+
+    return () => {
+      cancelled = true;
+      stopTicker();
+    };
+  }, [isSharingScreen, pip.isOpen, liveState, captureLiveStreamFrame]);
 
   // Upsert live voice transcript into unified chat feed
   const upsertVoiceTranscript = useCallback((entry: VoiceTranscriptEntry) => {
@@ -558,17 +997,27 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
           const executions: HermesToolExecution[] = [];
 
           for (const call of calls) {
-            const res = await executeHermesToolCall(
-              call,
-              stateRef.current,
-              toolHandlersRef.current
-            );
-            results.push({
-              id: res.id,
-              name: res.name,
-              response: res.response,
-            });
-            executions.push(res.execution);
+            const isHdInspect = call.name === 'inspect_screen_detail';
+            if (isHdInspect) {
+              beginHdInspection();
+            }
+            try {
+              const res = await executeHermesToolCall(
+                call,
+                stateRef.current,
+                toolHandlersRef.current
+              );
+              results.push({
+                id: res.id,
+                name: res.name,
+                response: res.response,
+              });
+              executions.push(res.execution);
+            } finally {
+              if (isHdInspect) {
+                endHdInspection();
+              }
+            }
           }
 
           if (executions.length > 0) {
@@ -591,7 +1040,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
       });
     }
     return voiceSessionRef.current;
-  }, [upsertVoiceTranscript]);
+  }, [upsertVoiceTranscript, beginHdInspection, endHdInspection]);
 
   const stopLiveVoice = useCallback(() => {
     voiceSessionRef.current?.disconnect();
@@ -623,6 +1072,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
       pace: state.voice.pace,
       systemPrompt,
       tools: [{ functionDeclarations: HERMES_LIVE_FUNCTION_DECLARATIONS }],
+      highResVision: true,
     });
   }, [
     state.provider.geminiApiKey,
@@ -653,6 +1103,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
   useEffect(() => {
     return () => {
       voiceSessionRef.current?.disconnect();
+      imageCaptureRef.current = null;
       const stream = screenStreamRef.current;
       if (stream) {
         for (const track of stream.getTracks()) {
@@ -668,6 +1119,15 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
     };
   }, []);
 
+  // Pre-fill chat composer when launched with an initial prompt (e.g. school portal sync)
+  useEffect(() => {
+    if (!initialPrompt || !initialPrompt.trim()) return;
+    setStudioTab('chat');
+    setChatInput(initialPrompt);
+    setPortalSyncBannerVisible(true);
+    onConsumeInitialPrompt?.();
+  }, [initialPrompt, onConsumeInitialPrompt]);
+
   // Auto-scroll chat feed
   useEffect(() => {
     if (studioTab === 'chat') {
@@ -675,17 +1135,25 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
     }
   }, [messages, isAgentThinking, studioTab]);
 
-  // Send a prompt to Hermes (with automatic screen snapshot when sharing)
+  // Send a prompt to Hermes (always capturing a crisp full-HD frame when sharing or bridge is online)
   const submitTeacherPrompt = useCallback(
-    async (rawPrompt: string, options?: { forceScreenCapture?: boolean }) => {
+    async (
+      rawPrompt: string,
+      options?: {
+        forceScreenCapture?: boolean;
+        prefetchedFrame?: CapturedFrameResult | null;
+      }
+    ) => {
       const trimmed = rawPrompt.trim();
       if (!trimmed || isAgentThinking) return;
 
       setAgentError(null);
-      const capturedBase64 =
-        isSharingRef.current || options?.forceScreenCapture
-          ? captureCurrentFrameBase64()
-          : null;
+      const shouldCapture =
+        isSharingRef.current || bridgeOnlineRef.current || Boolean(options?.forceScreenCapture);
+      const capturedFrame =
+        options?.prefetchedFrame ??
+        (shouldCapture ? await captureFreshFullResFrame() : null);
+      const capturedBase64 = capturedFrame?.base64 ?? null;
 
       // When Live Voice is active and Gemini key is present, route directly into live audio + vision
       if (liveState === 'connected' && voiceSessionRef.current) {
@@ -743,23 +1211,33 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
         setIsAgentThinking(false);
       }
     },
-    [isAgentThinking, captureCurrentFrameBase64, liveState, messages]
+    [isAgentThinking, captureFreshFullResFrame, liveState, messages]
   );
 
   // One-click "Bildschirm prüfen" action (shared by main stage and Floating PiP window)
   const handleInspectScreenNow = useCallback(async () => {
     setScreenError(null);
-    if (!isSharingRef.current) {
+    let prefetchedFrame: CapturedFrameResult | null = null;
+
+    if (isSharingRef.current || bridgeOnlineRef.current) {
+      prefetchedFrame = await captureFreshFullResFrame();
+    }
+
+    if (!prefetchedFrame && !isSharingRef.current) {
       const started = await startScreenShare();
       if (!started) return;
-      // Allow a brief moment for the first video frame to decode
+      // Allow a brief moment for the first hardware video frame to decode
       await new Promise((resolve) => window.setTimeout(resolve, 420));
+      prefetchedFrame = await captureFreshFullResFrame();
     }
 
     const inspectPrompt =
       'Prüfe meinen aktuellen Bildschirm: Erkläre mir kurz und klar, was du siehst, was der nächste sinnvolle Schritt ist, und markiere mit highlight_screen_region die wichtigsten Stellen zum Hinschauen oder Klicken.';
-    await submitTeacherPrompt(inspectPrompt, { forceScreenCapture: true });
-  }, [startScreenShare, submitTeacherPrompt]);
+    await submitTeacherPrompt(inspectPrompt, {
+      forceScreenCapture: true,
+      prefetchedFrame,
+    });
+  }, [captureFreshFullResFrame, startScreenShare, submitTeacherPrompt]);
 
   const handleChatFormSubmit = useCallback(
     (event: React.FormEvent) => {
@@ -767,6 +1245,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
       const trimmed = chatInput.trim();
       if (!trimmed) return;
       setChatInput('');
+      setPortalSyncBannerVisible(false);
       void submitTeacherPrompt(trimmed);
     },
     [chatInput, submitTeacherPrompt]
@@ -972,15 +1451,23 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                 </span>
                 <span
                   className="text-[11px] truncate"
-                  style={{ color: 'var(--text-muted)' }}
+                  style={{
+                    color: isInspectingHd ? 'var(--accent-warm)' : 'var(--text-muted)',
+                  }}
                 >
-                  {isLive
-                    ? speakerSpeaking
-                      ? 'Spricht'
-                      : 'Live'
-                    : isSharingScreen
-                      ? 'Sieht Bildschirm'
-                      : 'Bereit'}
+                  {isInspectingHd
+                    ? 'HD-Prüfung läuft...'
+                    : isLive
+                      ? speakerSpeaking
+                        ? 'Spricht'
+                        : isSharingScreen
+                          ? 'Live-Sicht aktiv · HD bereit'
+                          : 'Live'
+                      : isSharingScreen
+                        ? 'Live-Sicht aktiv · HD bereit'
+                        : bridgeOnline
+                          ? 'HD-Prüfung bereit'
+                          : 'Bereit'}
                 </span>
               </div>
 
@@ -996,7 +1483,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
             </header>
 
             {/* Compact Live Screen Thumbnail + Spotlight Pins */}
-            {isSharingScreen ? (
+            {isSharingScreen || previewDataUrl ? (
               <div
                 className="relative aspect-[16/9] w-full shrink-0 overflow-hidden border-b"
                 style={{
@@ -1023,13 +1510,27 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
 
                 {activeWindowTitle && (
                   <div
-                    className="pointer-events-none absolute bottom-1.5 left-1.5 max-w-[85%] truncate rounded-full px-2 py-0.5 text-[10.5px]"
+                    className={`pointer-events-none absolute bottom-1.5 left-1.5 ${
+                      lastFrameTime ? 'max-w-[66%]' : 'max-w-[85%]'
+                    } truncate rounded-full px-2 py-0.5 text-[10.5px]`}
                     style={{
                       backgroundColor: 'rgba(24, 36, 34, 0.86)',
                       color: '#fbf8f2',
                     }}
                   >
                     {activeWindowTitle}
+                  </div>
+                )}
+
+                {lastFrameTime && (
+                  <div
+                    className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-full px-2 py-0.5 font-mono-num text-[10px]"
+                    style={{
+                      backgroundColor: 'rgba(24, 36, 34, 0.84)',
+                      color: isInspectingHd ? '#f5b88f' : 'rgba(251, 248, 242, 0.88)',
+                    }}
+                  >
+                    {isInspectingHd ? 'HD...' : formatClockSeconds(lastFrameTime)}
                   </div>
                 )}
 
@@ -1060,7 +1561,9 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                 <span className="truncate">
                   {activeWindowTitle
                     ? `Fenster: ${activeWindowTitle}`
-                    : 'Bildschirm noch nicht geteilt'}
+                    : bridgeOnline
+                      ? 'HD-Prüfung über Bridge bereit'
+                      : 'Bildschirm noch nicht geteilt'}
                 </span>
                 <button
                   type="button"
@@ -1111,7 +1614,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                   opacity: isAgentThinking ? 0.6 : 1,
                 }}
               >
-                {isAgentThinking ? (
+                {isAgentThinking || isInspectingHd ? (
                   <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
                 ) : (
                   <Camera size={14} strokeWidth={1.5} />
@@ -1127,21 +1630,47 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                   className="flex flex-wrap gap-1 pb-2 border-b"
                   style={{ borderColor: 'var(--border-hairline)' }}
                 >
-                  {recentPipActions.map((act) => (
-                    <span
-                      key={act.id}
-                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] max-w-full truncate"
-                      style={{
-                        backgroundColor:
-                          act.status === 'ok' ? 'var(--accent-soft)' : 'var(--negative-soft)',
-                        color: act.status === 'ok' ? 'var(--accent)' : 'var(--negative)',
-                      }}
-                      title={act.summary}
-                    >
-                      <Check size={10} strokeWidth={2} className="shrink-0" />
-                      <span className="truncate">{act.summary}</span>
-                    </span>
-                  ))}
+                  {recentPipActions.map((act) => {
+                    const isHdInspectTool = act.toolName === 'inspect_screen_detail';
+                    const label = getToolDisplayLabel(act.toolName);
+                    return (
+                      <span
+                        key={act.id}
+                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] max-w-full truncate"
+                        style={{
+                          backgroundColor:
+                            act.status !== 'ok'
+                              ? 'var(--negative-soft)'
+                              : isHdInspectTool
+                                ? 'var(--accent-warm-soft)'
+                                : 'var(--accent-soft)',
+                          border: `1px solid ${
+                            act.status !== 'ok'
+                              ? 'var(--negative)'
+                              : isHdInspectTool
+                                ? 'var(--accent-warm-border)'
+                                : 'var(--accent-border)'
+                          }`,
+                          color:
+                            act.status !== 'ok'
+                              ? 'var(--negative)'
+                              : isHdInspectTool
+                                ? 'var(--accent-warm)'
+                                : 'var(--accent)',
+                        }}
+                        title={act.summary}
+                      >
+                        {isHdInspectTool ? (
+                          <Camera size={10} strokeWidth={1.7} className="shrink-0" />
+                        ) : (
+                          <Check size={10} strokeWidth={2} className="shrink-0" />
+                        )}
+                        <span className="truncate">
+                          {isHdInspectTool ? label : act.summary}
+                        </span>
+                      </span>
+                    );
+                  })}
                 </div>
               )}
 
@@ -1194,17 +1723,71 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                           }
                         >
                           {msg.text}
+
+                          {!isUser &&
+                            msg.executedTools &&
+                            msg.executedTools.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                                {msg.executedTools.map((tool) => {
+                                  const isHdInspectTool =
+                                    tool.toolName === 'inspect_screen_detail';
+                                  return (
+                                    <span
+                                      key={tool.id}
+                                      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium"
+                                      style={{
+                                        backgroundColor:
+                                          tool.status !== 'ok'
+                                            ? 'var(--negative-soft)'
+                                            : isHdInspectTool
+                                              ? 'var(--accent-warm-soft)'
+                                              : 'var(--accent-soft)',
+                                        border: `1px solid ${
+                                          tool.status !== 'ok'
+                                            ? 'var(--negative)'
+                                            : isHdInspectTool
+                                              ? 'var(--accent-warm-border)'
+                                              : 'var(--accent-border)'
+                                        }`,
+                                        color:
+                                          tool.status !== 'ok'
+                                            ? 'var(--negative)'
+                                            : isHdInspectTool
+                                              ? 'var(--accent-warm)'
+                                              : 'var(--accent)',
+                                      }}
+                                      title={tool.summary}
+                                    >
+                                      {isHdInspectTool && (
+                                        <Camera
+                                          size={10}
+                                          strokeWidth={1.7}
+                                          className="shrink-0"
+                                        />
+                                      )}
+                                      <span>{getToolDisplayLabel(tool.toolName)}</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
                         </div>
                       </div>
                     );
                   })}
-                  {isAgentThinking && (
+                  {(isAgentThinking || isInspectingHd) && (
                     <div
                       className="flex items-center gap-1.5 text-[12px]"
-                      style={{ color: 'var(--text-muted)' }}
+                      style={{
+                        color: isInspectingHd
+                          ? 'var(--accent-warm)'
+                          : 'var(--text-muted)',
+                      }}
                     >
                       <Loader2 size={12} strokeWidth={1.5} className="animate-spin" />
-                      <span>Hermes denkt nach...</span>
+                      <span>
+                        {isInspectingHd ? 'HD-Prüfung läuft...' : 'Hermes denkt nach...'}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -1438,7 +2021,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                 playsInline
                 muted
                 onLoadedData={() => {
-                  captureCurrentFrameBase64();
+                  void captureLiveStreamFrame({ maxWidth: 1440, quality: 0.84 });
                 }}
                 className={`h-full w-full object-contain transition-opacity duration-200 ${
                   isSharingScreen ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -1502,9 +2085,16 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                         className="inline-block h-2 w-2 rounded-full"
                         style={{ backgroundColor: 'var(--accent-warm)' }}
                       />
-                      <span>Live-Bildschirm</span>
-                      {isLive && (
-                        <span className="font-mono-num opacity-80">· 1 FPS Stimme</span>
+                      <span>
+                        {isInspectingHd ? 'HD-Prüfung läuft...' : 'Live-Bildschirm'}
+                      </span>
+                      {isLive && !isInspectingHd && (
+                        <span className="font-mono-num opacity-80">· HD-Stream</span>
+                      )}
+                      {lastFrameTime && !isInspectingHd && (
+                        <span className="font-mono-num opacity-75">
+                          · {formatClockSeconds(lastFrameTime)}
+                        </span>
                       )}
                     </span>
                   </div>
@@ -1596,7 +2186,7 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                     opacity: isAgentThinking ? 0.6 : 1,
                   }}
                 >
-                  {isAgentThinking ? (
+                  {isAgentThinking || isInspectingHd ? (
                     <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
                   ) : (
                     <Camera size={14} strokeWidth={1.5} />
@@ -1683,17 +2273,19 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
               <div className="space-y-0.5 min-w-0">
                 <div className="flex items-center gap-2 text-[13.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
                   <span>
-                    {isConnecting
-                      ? liveDetail || 'Verbindet mit Gemini Live...'
-                      : isLive
-                        ? speakerSpeaking
-                          ? `${state.voice.voiceName} erklärt gerade`
-                          : liveMuted
-                            ? 'Mikrofon stummgeschaltet'
-                            : isSharingScreen
-                              ? 'Hermes hört zu und sieht deinen Bildschirm live'
-                              : 'Hermes hört zu'
-                        : 'Sprach- und Bildschirmkontext'}
+                    {isInspectingHd
+                      ? 'HD-Prüfung läuft...'
+                      : isConnecting
+                        ? liveDetail || 'Verbindet mit Gemini Live...'
+                        : isLive
+                          ? speakerSpeaking
+                            ? `${state.voice.voiceName} erklärt gerade`
+                            : liveMuted
+                              ? 'Mikrofon stummgeschaltet'
+                              : isSharingScreen
+                                ? 'Hermes hört zu und sieht deinen Bildschirm live'
+                                : 'Hermes hört zu'
+                          : 'Sprach- und Bildschirmkontext'}
                   </span>
                 </div>
                 <div
@@ -1705,10 +2297,34 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                   <span>{LANGUAGE_META[state.voice.languageLock].nameDe}</span>
                   <span>·</span>
                   <span>{state.voice.stance === 'coach' ? 'Coach' : 'Assistenz'}</span>
+                  {(isSharingScreen || bridgeOnline || isInspectingHd) && (
+                    <>
+                      <span>·</span>
+                      <span
+                        style={{
+                          color: isInspectingHd ? 'var(--accent-warm)' : 'var(--accent)',
+                        }}
+                      >
+                        {isInspectingHd
+                          ? 'HD-Prüfung läuft...'
+                          : isSharingScreen
+                            ? 'Live-Sicht aktiv · HD-Prüfung bereit'
+                            : 'HD-Prüfung bereit'}
+                      </span>
+                    </>
+                  )}
+                  {lastFrameTime && (isSharingScreen || bridgeOnline) && (
+                    <>
+                      <span>·</span>
+                      <span className="font-mono-num" title="Letztes erfasstes Bild">
+                        Stand {formatClockSeconds(lastFrameTime)}
+                      </span>
+                    </>
+                  )}
                   {bridgeOnline && (
                     <>
                       <span>·</span>
-                      <span style={{ color: 'var(--accent)' }}>Companion Bridge verbunden</span>
+                      <span>Companion Bridge</span>
                     </>
                   )}
                 </div>
@@ -2029,23 +2645,43 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                                   {msg.executedTools.map((tool) => {
                                     const nav = getToolNavigationTarget(tool.toolName);
+                                    const isHdInspectTool =
+                                      tool.toolName === 'inspect_screen_detail';
                                     return (
                                       <span
                                         key={tool.id}
-                                        className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px]"
+                                        className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
                                         style={{
                                           backgroundColor:
-                                            tool.status === 'ok'
-                                              ? 'var(--accent-soft)'
-                                              : 'var(--negative-soft)',
+                                            tool.status !== 'ok'
+                                              ? 'var(--negative-soft)'
+                                              : isHdInspectTool
+                                                ? 'var(--accent-warm-soft)'
+                                                : 'var(--accent-soft)',
+                                          border: `1px solid ${
+                                            tool.status !== 'ok'
+                                              ? 'var(--negative)'
+                                              : isHdInspectTool
+                                                ? 'var(--accent-warm-border)'
+                                                : 'var(--accent-border)'
+                                          }`,
                                           color:
-                                            tool.status === 'ok'
-                                              ? 'var(--accent)'
-                                              : 'var(--negative)',
+                                            tool.status !== 'ok'
+                                              ? 'var(--negative)'
+                                              : isHdInspectTool
+                                                ? 'var(--accent-warm)'
+                                                : 'var(--accent)',
                                         }}
                                         title={tool.summary}
                                       >
-                                        <span className="font-mono-num">{tool.toolName}</span>
+                                        {isHdInspectTool && (
+                                          <Camera
+                                            size={11}
+                                            strokeWidth={1.6}
+                                            className="shrink-0"
+                                          />
+                                        )}
+                                        <span>{getToolDisplayLabel(tool.toolName)}</span>
                                         {nav && tool.status === 'ok' && (
                                           <button
                                             type="button"
@@ -2066,19 +2702,23 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                       );
                     })}
 
-                    {isAgentThinking && (
+                    {(isAgentThinking || isInspectingHd) && (
                       <div
                         className="flex items-center gap-2 border-l-2 pl-3.5 py-1 text-[13px]"
                         style={{
                           borderColor: 'var(--accent-warm)',
-                          color: 'var(--text-secondary)',
+                          color: isInspectingHd
+                            ? 'var(--accent-warm)'
+                            : 'var(--text-secondary)',
                         }}
                       >
                         <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
                         <span>
-                          {isSharingScreen
-                            ? 'Hermes prüft Bildschirm und Kontext...'
-                            : 'Hermes bereitet Antwort vor...'}
+                          {isInspectingHd
+                            ? 'HD-Prüfung läuft...'
+                            : isSharingScreen || bridgeOnline
+                              ? 'Hermes prüft Bildschirm und Kontext...'
+                              : 'Hermes bereitet Antwort vor...'}
                         </span>
                       </div>
                     )}
@@ -2135,17 +2775,45 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                     <span
                       className="inline-block h-1.5 w-1.5 rounded-full shrink-0"
                       style={{
-                        backgroundColor: isSharingScreen
-                          ? 'var(--accent-warm)'
-                          : 'var(--border-strong)',
+                        backgroundColor:
+                          isInspectingHd || isSharingScreen
+                            ? 'var(--accent-warm)'
+                            : bridgeOnline
+                              ? 'var(--accent)'
+                              : 'var(--border-strong)',
                       }}
                     />
-                    {isSharingScreen ? (
+                    {isInspectingHd ? (
                       <span
                         className="font-medium truncate"
                         style={{ color: 'var(--accent-warm)' }}
                       >
-                        Mit Live-Bildschirm
+                        HD-Prüfung läuft...
+                      </span>
+                    ) : isSharingScreen ? (
+                      <span
+                        className="font-medium truncate"
+                        style={{ color: 'var(--accent-warm)' }}
+                      >
+                        Live-Sicht aktiv · HD-Prüfung bereit
+                      </span>
+                    ) : bridgeOnline ? (
+                      <span className="inline-flex items-center gap-1.5 min-w-0">
+                        <span
+                          className="font-medium truncate"
+                          style={{ color: 'var(--accent)' }}
+                        >
+                          HD-Prüfung über Bridge bereit
+                        </span>
+                        <span style={{ color: 'var(--border-strong)' }}>·</span>
+                        <button
+                          type="button"
+                          onClick={() => void startScreenShare()}
+                          className="shrink-0 cursor-pointer hover:underline"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          Live teilen
+                        </button>
                       </span>
                     ) : (
                       <button
@@ -2173,6 +2841,33 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                     </button>
                   )}
                 </div>
+
+                {portalSyncBannerVisible && (
+                  <div
+                    className="border-l-2 pl-3 py-1 flex items-start justify-between gap-2 text-[12.5px] leading-snug"
+                    style={{
+                      borderColor: 'var(--accent)',
+                      color: 'var(--text-secondary)',
+                    }}
+                    role="status"
+                  >
+                    <span>
+                      <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                        Portal-Abgleich bereit:
+                      </span>{' '}
+                      Teile dein geöffnetes Schulportal-Fenster und sende den Auftrag ab.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPortalSyncBannerVisible(false)}
+                      aria-label="Hinweis schliessen"
+                      className="p-0.5 shrink-0 cursor-pointer"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <X size={13} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                )}
 
                 <form onSubmit={handleChatFormSubmit} className="flex items-center gap-2">
                   <input
@@ -2617,15 +3312,23 @@ export const HermesScreenTeacherView: React.FC<HermesScreenTeacherViewProps> = (
                       >
                         <div className="flex items-center justify-between gap-2 text-[11.5px]">
                           <span
-                            className="font-mono-num font-medium truncate"
+                            className="inline-flex items-center gap-1.5 font-medium truncate"
                             style={{
                               color:
-                                entry.status === 'ok'
-                                  ? 'var(--accent)'
-                                  : 'var(--negative)',
+                                entry.status !== 'ok'
+                                  ? 'var(--negative)'
+                                  : entry.toolName === 'inspect_screen_detail'
+                                    ? 'var(--accent-warm)'
+                                    : 'var(--accent)',
                             }}
+                            title={entry.toolName}
                           >
-                            {entry.toolName}
+                            {entry.toolName === 'inspect_screen_detail' && (
+                              <Camera size={11} strokeWidth={1.6} className="shrink-0" />
+                            )}
+                            <span className="truncate">
+                              {getToolDisplayLabel(entry.toolName)}
+                            </span>
                           </span>
                           <span
                             className="font-mono-num shrink-0"

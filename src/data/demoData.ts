@@ -297,6 +297,11 @@ export function createDemoState(): OpenStudyState {
       hermesGatewayUrl: 'http://127.0.0.1:9119',
       hermesModel: 'hermes-default',
       hermesApiKey: '',
+      schoolPortalUrl: '',
+      obsidianVaultPath: '',
+      autoSyncEnabled: false,
+      autoSyncIntervalMinutes: 60,
+      lastAutoSyncAt: '',
     },
     voice: {
       voiceName: 'Kore',

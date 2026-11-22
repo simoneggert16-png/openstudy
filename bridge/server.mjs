@@ -26,10 +26,21 @@ const AGENT_TIMEOUT_MS = 45_000;
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CHAT_BODY_BYTES = 512 * 1024;
 const MAX_OUTPUT_BYTES = 512 * 1024;
-const MAX_OBSIDIAN_FILES = 250;
+const MAX_OBSIDIAN_FILES = 350;
 const MAX_NOTE_BYTES = 256 * 1024;
 const MAX_NOTE_CONTENT_CHARS = 12_000;
 const MAX_EXCERPT_CHARS = 220;
+
+const ONENOTE_TIMEOUT_MS = 6_000;
+const MAX_ONENOTE_STDOUT_BYTES = 2 * 1024 * 1024;
+const MAX_ONENOTE_RECENT_PAGES = 120;
+const MAX_ONENOTE_PAGE_CHARS = 16_000;
+
+const SYNC_MIN_INTERVAL_MINUTES = 15;
+const SYNC_MAX_INTERVAL_MINUTES = 1_440;
+const SYNC_DEFAULT_INTERVAL_MINUTES = 60;
+const SYNC_SAMPLE_OBSIDIAN_LIMIT = 60;
+const SYNC_UPCOMING_DAYS = 30;
 
 const DEFAULT_HERMES_GATEWAY_URL = 'http://127.0.0.1:9119';
 const HERMES_PROBE_TIMEOUT_MS = 1_500;
@@ -39,6 +50,8 @@ const MAX_HERMES_SKILLS = 100;
 const MAX_HERMES_MEMORY_ENTRIES = 100;
 
 const DESKTOP_WINDOW_TIMEOUT_MS = 1_500;
+const DESKTOP_SCREENSHOT_TIMEOUT_MS = 4_500;
+const MAX_SCREENSHOT_STDOUT_BYTES = 10 * 1024 * 1024;
 const HIGHLIGHT_MIN_DURATION_MS = 1_500;
 const HIGHLIGHT_MAX_DURATION_MS = 7_000;
 const HIGHLIGHT_DEFAULT_DURATION_MS = 4_500;
@@ -81,6 +94,9 @@ const CLI_DEFINITIONS = {
 
 const SENSITIVE_NAME_PATTERN =
   /(^|[._\-\s])(env|passwords?|passwd|passwort|passwörter|passwoerter|secrets?|credits?|kreditkarten?|cardnumber|apikeys?|api_keys?|keys?|tokens?|credentials?|private|id_rsa|id_ed25519|seedphrase|recovery|banking|steuer|passport|ausweis)([._\-\s]|$)|^\.env/i;
+
+const SENSITIVE_ONENOTE_PATTERN =
+  /(^|[._\-\s/])(env|passwords?|passwd|passwort|passwörter|passwoerter|secrets?|credits?|kreditkarten?|cardnumber|apikeys?|api_keys?|tokens?|credentials?|private|privat|vault|tresor|geheim|banking|e-?banking|steuer|passport|ausweis|recovery|seedphrase|wallet|zugangsdaten|logins?)([._\-\s/]|$)/i;
 
 const SENSITIVE_WINDOW_PATTERN =
   /1password|bitwarden|keepass|lastpass|keychain|credential|private|incognito|inprivate|banking|e-?banking|kreditkarte|credit\s*card|passwort|password|passwörter|passwoerter|dashlane|enpass|proton\s*pass|nordpass/i;
@@ -577,9 +593,76 @@ function buildExcerpt(markdownBody) {
   return `${plain.slice(0, MAX_EXCERPT_CHARS - 1).trimEnd()}…`;
 }
 
+function getObsidianConfigPath() {
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+    return path.join(appData, 'obsidian', 'obsidian.json');
+  }
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Application Support', 'obsidian', 'obsidian.json');
+  }
+  return path.join(os.homedir(), '.config', 'obsidian', 'obsidian.json');
+}
+
+async function detectObsidianVaults() {
+  const configPath = getObsidianConfigPath();
+  let raw;
+  try {
+    raw = await fsp.readFile(configPath, 'utf8');
+  } catch {
+    return { ok: true, vaults: [] };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: true, vaults: [] };
+  }
+
+  const rawVaults = parsed && typeof parsed.vaults === 'object' && parsed.vaults !== null ? parsed.vaults : null;
+  if (!rawVaults) {
+    return { ok: true, vaults: [] };
+  }
+
+  const vaults = [];
+  for (const [id, entry] of Object.entries(rawVaults)) {
+    if (!entry || typeof entry !== 'object' || typeof entry.path !== 'string') continue;
+    const rawPath = entry.path.trim();
+    if (!rawPath) continue;
+
+    const resolvedPath = path.resolve(rawPath);
+    if (isForbiddenVaultRoot(resolvedPath)) continue;
+
+    let exists = false;
+    try {
+      exists = fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isDirectory();
+    } catch {
+      exists = false;
+    }
+
+    if (!exists) continue;
+
+    vaults.push({
+      id: String(id),
+      name: path.basename(resolvedPath) || resolvedPath,
+      path: resolvedPath,
+      isOpen: Boolean(entry.open),
+      exists: true,
+    });
+  }
+
+  vaults.sort((a, b) => {
+    if (a.isOpen !== b.isOpen) return a.isOpen ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  return { ok: true, vaults };
+}
+
 async function scanObsidianVault(rawDir) {
   if (typeof rawDir !== 'string' || !rawDir.trim()) {
-    throw Object.assign(new Error('Query parameter "dir" is required.'), { status: 400 });
+    throw Object.assign(new Error('Parameter "vaultPath" (or "dir") is required.'), { status: 400 });
   }
 
   const requestedPath = path.resolve(rawDir.trim());
@@ -1933,6 +2016,1240 @@ function showDesktopHighlight(body) {
   };
 }
 
+const SCREENSHOT_PS_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+  'Add-Type -AssemblyName System.Windows.Forms',
+  'Add-Type -AssemblyName System.Drawing',
+  '$inv = [System.Globalization.CultureInfo]::InvariantCulture',
+  '$xPct = [double]::Parse($env:OPENSTUDY_SHOT_X, $inv)',
+  '$yPct = [double]::Parse($env:OPENSTUDY_SHOT_Y, $inv)',
+  '$wPct = [double]::Parse($env:OPENSTUDY_SHOT_W, $inv)',
+  '$hPct = [double]::Parse($env:OPENSTUDY_SHOT_H, $inv)',
+  '$maxW = [int]::Parse($env:OPENSTUDY_SHOT_MAX_WIDTH, $inv)',
+  '$quality = [long]::Parse($env:OPENSTUDY_SHOT_QUALITY, $inv)',
+  '$csharp = @"',
+  'using System;',
+  'using System.ComponentModel;',
+  'using System.Drawing;',
+  'using System.Drawing.Drawing2D;',
+  'using System.Drawing.Imaging;',
+  'using System.IO;',
+  'using System.Runtime.InteropServices;',
+  'using System.Windows.Forms;',
+  'public static class OpenStudyScreenCapture {',
+  '    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();',
+  '    public static string CaptureJson(double xPct, double yPct, double wPct, double hPct, int maxW, long quality) {',
+  '        SetProcessDPIAware();',
+  '        Rectangle bounds = Screen.PrimaryScreen.Bounds;',
+  '        int sw = bounds.Width;',
+  '        int sh = bounds.Height;',
+  '        int cx = Math.Max(0, Math.Min(sw - 1, (int)Math.Floor(sw * (xPct / 100.0))));',
+  '        int cy = Math.Max(0, Math.Min(sh - 1, (int)Math.Floor(sh * (yPct / 100.0))));',
+  '        int cw = Math.Max(1, Math.Min(sw - cx, (int)Math.Round(sw * (wPct / 100.0))));',
+  '        int ch = Math.Max(1, Math.Min(sh - cy, (int)Math.Round(sh * (hPct / 100.0))));',
+  '        using (Bitmap raw = new Bitmap(cw, ch, PixelFormat.Format24bppRgb)) {',
+  '            try {',
+  '                using (Graphics g = Graphics.FromImage(raw)) {',
+  '                    g.CopyFromScreen(bounds.Left + cx, bounds.Top + cy, 0, 0, new Size(cw, ch), CopyPixelOperation.SourceCopy);',
+  '                }',
+  '            } catch (Win32Exception) {',
+  '                return "{\\"error\\":\\"Desktop ist aktuell gesperrt oder nicht erreichbar.\\"}";',
+  '            }',
+  '            Bitmap output = raw;',
+  '            Bitmap resized = null;',
+  '            int ow = cw;',
+  '            int oh = ch;',
+  '            try {',
+  '                if (cw > maxW) {',
+  '                    ow = maxW;',
+  '                    oh = Math.Max(1, (int)Math.Round(ch * (maxW / (double)cw)));',
+  '                    resized = new Bitmap(ow, oh, PixelFormat.Format24bppRgb);',
+  '                    using (Graphics rg = Graphics.FromImage(resized)) {',
+  '                        rg.InterpolationMode = InterpolationMode.HighQualityBicubic;',
+  '                        rg.SmoothingMode = SmoothingMode.HighQuality;',
+  '                        rg.PixelOffsetMode = PixelOffsetMode.HighQuality;',
+  '                        rg.CompositingQuality = CompositingQuality.HighQuality;',
+  '                        rg.DrawImage(raw, 0, 0, ow, oh);',
+  '                    }',
+  '                    output = resized;',
+  '                }',
+  '                ImageCodecInfo jpegCodec = null;',
+  '                foreach (ImageCodecInfo codec in ImageCodecInfo.GetImageEncoders()) {',
+  '                    if (codec.MimeType == "image/jpeg") { jpegCodec = codec; break; }',
+  '                }',
+  '                using (MemoryStream ms = new MemoryStream()) {',
+  '                    if (jpegCodec != null) {',
+  '                        using (EncoderParameters ep = new EncoderParameters(1)) {',
+  '                            ep.Param[0] = new EncoderParameter(Encoder.Quality, quality);',
+  '                            output.Save(ms, jpegCodec, ep);',
+  '                        }',
+  '                    } else {',
+  '                        output.Save(ms, ImageFormat.Jpeg);',
+  '                    }',
+  '                    string b64 = Convert.ToBase64String(ms.ToArray());',
+  '                    return string.Format("{{\\"width\\":{0},\\"height\\":{1},\\"base64\\":\\"{2}\\"}}", ow, oh, b64);',
+  '                }',
+  '            } finally {',
+  '                if (resized != null) resized.Dispose();',
+  '            }',
+  '        }',
+  '    }',
+  '}',
+  '"@',
+  'Add-Type -TypeDefinition $csharp -ReferencedAssemblies System.Windows.Forms, System.Drawing',
+  '[Console]::Out.Write([OpenStudyScreenCapture]::CaptureJson($xPct, $yPct, $wPct, $hPct, $maxW, $quality))',
+].join('\n');
+
+const SCREENSHOT_PS_B64 = Buffer.from(SCREENSHOT_PS_SCRIPT, 'utf16le').toString('base64');
+
+function parseClampedQueryNumber(rawValue, fallback, min, max) {
+  if (rawValue === null || rawValue === undefined || rawValue === '') return fallback;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+async function captureDesktopScreenshot(searchParams) {
+  if (process.platform !== 'win32') {
+    return {
+      status: 200,
+      payload: {
+        ok: false,
+        available: false,
+      },
+    };
+  }
+
+  // Privacy Guard FIRST: refuse capture whenever a password manager, banking, or private window is active
+  const windowCtx = await getActiveDesktopWindow();
+  if (windowCtx?.redacted === true) {
+    return {
+      status: 403,
+      payload: {
+        ok: false,
+        redacted: true,
+        error: 'Geschütztes Fenster aktiv — kein Screenshot erstellt.',
+      },
+    };
+  }
+
+  const x = parseClampedQueryNumber(searchParams.get('x'), 0, 0, 95);
+  const y = parseClampedQueryNumber(searchParams.get('y'), 0, 0, 95);
+  const w = parseClampedQueryNumber(searchParams.get('w'), 100, 5, 100);
+  const h = parseClampedQueryNumber(searchParams.get('h'), 100, 5, 100);
+  const maxWidth = Math.round(parseClampedQueryNumber(searchParams.get('maxWidth'), 1920, 400, 2560));
+  const quality = Math.round(parseClampedQueryNumber(searchParams.get('quality'), 88, 60, 95));
+
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-EncodedCommand',
+          SCREENSHOT_PS_B64,
+        ],
+        {
+          shell: false,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            OPENSTUDY_SHOT_X: String(x),
+            OPENSTUDY_SHOT_Y: String(y),
+            OPENSTUDY_SHOT_W: String(w),
+            OPENSTUDY_SHOT_H: String(h),
+            OPENSTUDY_SHOT_MAX_WIDTH: String(maxWidth),
+            OPENSTUDY_SHOT_QUALITY: String(quality),
+          },
+        }
+      );
+    } catch {
+      resolve({
+        status: 500,
+        payload: {
+          ok: false,
+          available: false,
+          error: 'Windows-Screenshot-Helfer konnte nicht gestartet werden.',
+        },
+      });
+      return;
+    }
+
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let settled = false;
+
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      done({
+        status: 504,
+        payload: {
+          ok: false,
+          error: 'Zeitüberschreitung beim Erstellen des Desktop-Screenshots.',
+        },
+      });
+    }, DESKTOP_SCREENSHOT_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk) => {
+      if (stdoutBytes + chunk.length <= MAX_SCREENSHOT_STDOUT_BYTES) {
+        stdoutChunks.push(chunk);
+        stdoutBytes += chunk.length;
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      if (stderrBytes < 4096) {
+        stderrChunks.push(chunk);
+        stderrBytes += chunk.length;
+      }
+    });
+
+    child.on('error', () => {
+      done({
+        status: 500,
+        payload: {
+          ok: false,
+          available: false,
+          error: 'Desktop-Screenshot fehlgeschlagen.',
+        },
+      });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        const errDetail = Buffer.concat(stderrChunks).toString('utf8').replace(/\s+/g, ' ').trim();
+        done({
+          status: 500,
+          payload: {
+            ok: false,
+            error: errDetail
+              ? `Desktop-Screenshot fehlgeschlagen: ${errDetail.slice(0, 180)}`
+              : 'Desktop-Screenshot fehlgeschlagen.',
+          },
+        });
+        return;
+      }
+
+      try {
+        const raw = Buffer.concat(stdoutChunks).toString('utf8').trim();
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (parsed && typeof parsed.error === 'string' && parsed.error.length > 0) {
+          done({
+            status: 503,
+            payload: {
+              ok: false,
+              error: parsed.error,
+            },
+          });
+          return;
+        }
+        if (
+          !parsed ||
+          typeof parsed.base64 !== 'string' ||
+          parsed.base64.length === 0 ||
+          typeof parsed.width !== 'number' ||
+          typeof parsed.height !== 'number' ||
+          parsed.width <= 0 ||
+          parsed.height <= 0
+        ) {
+          done({
+            status: 500,
+            payload: {
+              ok: false,
+              error: 'Desktop-Screenshot lieferte keine gültigen Bilddaten.',
+            },
+          });
+          return;
+        }
+
+        done({
+          status: 200,
+          payload: {
+            ok: true,
+            width: parsed.width,
+            height: parsed.height,
+            mimeType: 'image/jpeg',
+            base64: parsed.base64,
+            activeWindow: windowCtx.title || '',
+          },
+        });
+      } catch {
+        done({
+          status: 500,
+          payload: {
+            ok: false,
+            error: 'Desktop-Screenshot-Antwort konnte nicht gelesen werden.',
+          },
+        });
+      }
+    });
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Local Windows OneNote Desktop COM Scanner (Read-Only, Privacy-Filtered)   */
+/* -------------------------------------------------------------------------- */
+
+function toArray(value) {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined) return [];
+  return [value];
+}
+
+function isSensitiveOneNoteName(rawName) {
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
+  if (!name) return false;
+  return SENSITIVE_NAME_PATTERN.test(name) || SENSITIVE_ONENOTE_PATTERN.test(name);
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
+      const code = Number.parseInt(hex, 16);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+    })
+    .replace(/&#(\d+);/g, (_, dec) => {
+      const code = Number.parseInt(dec, 10);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+    });
+}
+
+function stripMarkupToReadableText(rawText) {
+  const withBreaks = String(rawText || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+
+  return decodeHtmlEntities(withBreaks)
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function createUnavailableOneNoteResult() {
+  return {
+    ok: true,
+    available: false,
+    source: 'none',
+    notebooks: [],
+    recentPages: [],
+    totalPages: 0,
+    message: 'Lokales OneNote Desktop nicht gefunden.',
+  };
+}
+
+const ONENOTE_SCAN_PS_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  "$ErrorActionPreference = 'Stop'",
+  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+  '$on = $null',
+  'try {',
+  '  $on = New-Object -ComObject OneNote.Application',
+  '} catch {',
+  '  [Console]::Out.Write(\'{"available":false}\')',
+  '  exit 0',
+  '}',
+  'try {',
+  "  $xml = ''",
+  "  $on.GetHierarchy('', 4, [ref]$xml)",
+  '  if ([string]::IsNullOrWhiteSpace($xml)) {',
+  '    [Console]::Out.Write(\'{"available":true,"notebooks":[]}\')',
+  '    exit 0',
+  '  }',
+  '  [xml]$doc = $xml',
+  "  $sensRx = '(?i)(^|[._\\-\\s/])(env|passwords?|passwd|passwort|passwörter|passwoerter|secrets?|credits?|kreditkarten?|cardnumber|apikeys?|api_keys?|tokens?|credentials?|private|privat|vault|tresor|geheim|banking|e-?banking|steuer|passport|ausweis|recovery|seedphrase|wallet|zugangsdaten|logins?)([._\\-\\s/]|$)'",
+  '  function Test-Sens([string]$s) {',
+  '    if ([string]::IsNullOrWhiteSpace($s)) { return $false }',
+  '    return ($s -match $sensRx)',
+  '  }',
+  '  function Collect-Sections($node, [string]$prefix, $targetList) {',
+  '    foreach ($child in $node.ChildNodes) {',
+  "      if ($child.NodeType -ne 'Element') { continue }",
+  '      $ln = $child.LocalName',
+  "      if ($ln -eq 'SectionGroup') {",
+  "        if ($child.GetAttribute('isRecycleBin') -eq 'true') { continue }",
+  "        $gName = [string]$child.GetAttribute('name')",
+  '        if (Test-Sens $gName) { continue }',
+  '        $nextPrefix = if ($prefix) { "$prefix / $gName" } else { $gName }',
+  '        Collect-Sections $child $nextPrefix $targetList',
+  "      } elseif ($ln -eq 'Section') {",
+  "        if ($child.GetAttribute('isInRecycleBin') -eq 'true' -or $child.GetAttribute('encrypted') -eq 'true' -or $child.GetAttribute('locked') -eq 'true') { continue }",
+  "        $sName = [string]$child.GetAttribute('name')",
+  '        if (Test-Sens $sName) { continue }',
+  '        $fullName = if ($prefix) { "$prefix / $sName" } else { $sName }',
+  '        $pages = New-Object System.Collections.ArrayList',
+  '        foreach ($p in $child.ChildNodes) {',
+  "          if ($p.NodeType -ne 'Element' -or $p.LocalName -ne 'Page') { continue }",
+  "          if ($p.GetAttribute('isInRecycleBin') -eq 'true') { continue }",
+  "          $pName = [string]$p.GetAttribute('name')",
+  '          if (Test-Sens $pName) { continue }',
+  "          $pMod = [string]$p.GetAttribute('lastModifiedTime')",
+  "          if ([string]::IsNullOrWhiteSpace($pMod)) { $pMod = [string]$p.GetAttribute('dateTime') }",
+  '          [void]$pages.Add(@{',
+  "            id = [string]$p.GetAttribute('ID')",
+  '            name = $pName',
+  '            lastModified = $pMod',
+  '          })',
+  '        }',
+  '        [void]$targetList.Add(@{',
+  "          id = [string]$child.GetAttribute('ID')",
+  '          name = $fullName',
+  '          pages = $pages.ToArray()',
+  '        })',
+  '      }',
+  '    }',
+  '  }',
+  '  $notebooks = New-Object System.Collections.ArrayList',
+  '  if ($doc.DocumentElement) {',
+  '    foreach ($nb in $doc.DocumentElement.ChildNodes) {',
+  "      if ($nb.NodeType -ne 'Element' -or $nb.LocalName -ne 'Notebook') { continue }",
+  "      $nbName = [string]$nb.GetAttribute('name')",
+  '      if (Test-Sens $nbName) { continue }',
+  '      $secList = New-Object System.Collections.ArrayList',
+  "      Collect-Sections $nb '' $secList",
+  '      [void]$notebooks.Add(@{',
+  "        id = [string]$nb.GetAttribute('ID')",
+  '        name = $nbName',
+  '        sections = $secList.ToArray()',
+  '      })',
+  '    }',
+  '  }',
+  '  $payload = @{ available = $true; notebooks = $notebooks.ToArray() }',
+  '  [Console]::Out.Write(($payload | ConvertTo-Json -Depth 8 -Compress))',
+  '} catch {',
+  '  [Console]::Out.Write(\'{"available":false}\')',
+  '} finally {',
+  '  if ($null -ne $on) {',
+  '    try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($on) } catch {}',
+  '  }',
+  '}',
+].join('\n');
+
+const ONENOTE_SCAN_PS_B64 = Buffer.from(ONENOTE_SCAN_PS_SCRIPT, 'utf16le').toString('base64');
+
+const ONENOTE_PAGE_PS_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  "$ErrorActionPreference = 'Stop'",
+  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+  '$pageId = $env:OPENSTUDY_ONENOTE_PAGE_ID',
+  'if ([string]::IsNullOrWhiteSpace($pageId)) {',
+  '  [Console]::Out.Write(\'{"available":true,"error":"missing_id"}\')',
+  '  exit 0',
+  '}',
+  '$on = $null',
+  'try {',
+  '  $on = New-Object -ComObject OneNote.Application',
+  '} catch {',
+  '  [Console]::Out.Write(\'{"available":false}\')',
+  '  exit 0',
+  '}',
+  'try {',
+  "  $xml = ''",
+  '  $on.GetPageContent($pageId, [ref]$xml, 0)',
+  '  if ([string]::IsNullOrWhiteSpace($xml)) {',
+  '    [Console]::Out.Write(\'{"available":true,"title":"","lines":[]}\')',
+  '    exit 0',
+  '  }',
+  '  [xml]$doc = $xml',
+  "  $pageName = ''",
+  '  if ($doc.DocumentElement) {',
+  "    $pageName = [string]$doc.DocumentElement.GetAttribute('name')",
+  '  }',
+  '  $titleParts = New-Object System.Collections.ArrayList',
+  "  $titleNodes = $doc.SelectNodes('//*[local-name()=\"Title\"]//*[local-name()=\"T\"]')",
+  '  if ($titleNodes) {',
+  '    foreach ($tn in $titleNodes) {',
+  '      $t = [string]$tn.InnerText',
+  '      if (-not [string]::IsNullOrWhiteSpace($t)) { [void]$titleParts.Add($t) }',
+  '    }',
+  '  }',
+  '  $lines = New-Object System.Collections.ArrayList',
+  "  $tNodes = $doc.SelectNodes('//*[local-name()=\"Outline\"]//*[local-name()=\"T\"]')",
+  '  if (-not $tNodes -or $tNodes.Count -eq 0) {',
+  "    $tNodes = $doc.SelectNodes('//*[local-name()=\"T\"]')",
+  '  }',
+  '  if ($tNodes) {',
+  '    foreach ($n in $tNodes) {',
+  '      $txt = [string]$n.InnerText',
+  '      if (-not [string]::IsNullOrWhiteSpace($txt)) { [void]$lines.Add($txt) }',
+  '    }',
+  '  }',
+  "  $title = ($titleParts.ToArray() -join ' ').Trim()",
+  '  if ([string]::IsNullOrWhiteSpace($title)) { $title = $pageName }',
+  '  $payload = @{ available = $true; title = $title; lines = $lines.ToArray() }',
+  '  [Console]::Out.Write(($payload | ConvertTo-Json -Depth 4 -Compress))',
+  '} catch {',
+  '  [Console]::Out.Write(\'{"available":true,"error":"read_failed"}\')',
+  '} finally {',
+  '  if ($null -ne $on) {',
+  '    try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($on) } catch {}',
+  '  }',
+  '}',
+].join('\n');
+
+const ONENOTE_PAGE_PS_B64 = Buffer.from(ONENOTE_PAGE_PS_SCRIPT, 'utf16le').toString('base64');
+
+function runOneNotePowerShell(encodedScript, extraEnv = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-STA',
+          '-WindowStyle',
+          'Hidden',
+          '-EncodedCommand',
+          encodedScript,
+        ],
+        {
+          shell: false,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          env: {
+            ...process.env,
+            ...extraEnv,
+          },
+        }
+      );
+    } catch {
+      resolve(null);
+      return;
+    }
+
+    const stdoutChunks = [];
+    let stdoutBytes = 0;
+    let settled = false;
+
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      done(null);
+    }, ONENOTE_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk) => {
+      if (stdoutBytes + chunk.length <= MAX_ONENOTE_STDOUT_BYTES) {
+        stdoutChunks.push(chunk);
+        stdoutBytes += chunk.length;
+      }
+    });
+
+    child.on('error', () => done(null));
+    child.on('close', (code) => {
+      if (code !== 0) {
+        done(null);
+        return;
+      }
+      try {
+        const raw = Buffer.concat(stdoutChunks).toString('utf8').trim();
+        done(raw ? JSON.parse(raw) : null);
+      } catch {
+        done(null);
+      }
+    });
+  });
+}
+
+function compareIsoDesc(a, b) {
+  const ta = Date.parse(a || '') || 0;
+  const tb = Date.parse(b || '') || 0;
+  return tb - ta;
+}
+
+async function scanLocalOneNote() {
+  if (process.platform !== 'win32') {
+    return createUnavailableOneNoteResult();
+  }
+
+  const parsed = await runOneNotePowerShell(ONENOTE_SCAN_PS_B64);
+  if (!parsed || parsed.available !== true) {
+    return createUnavailableOneNoteResult();
+  }
+
+  const rawNotebooks = toArray(parsed.notebooks);
+  const notebooks = [];
+  const allRecentCandidates = [];
+  let totalPages = 0;
+
+  for (const rawNb of rawNotebooks) {
+    if (!rawNb || typeof rawNb !== 'object') continue;
+    const nbId = typeof rawNb.id === 'string' ? rawNb.id.trim() : '';
+    const nbName = typeof rawNb.name === 'string' ? rawNb.name.trim() : '';
+    if (!nbId || !nbName || isSensitiveOneNoteName(nbName)) continue;
+
+    const rawSections = toArray(rawNb.sections);
+    const sections = [];
+    let notebookPageCount = 0;
+
+    for (const rawSec of rawSections) {
+      if (!rawSec || typeof rawSec !== 'object') continue;
+      const secId = typeof rawSec.id === 'string' ? rawSec.id.trim() : '';
+      const secName = typeof rawSec.name === 'string' ? rawSec.name.trim() : '';
+      if (!secId || !secName || isSensitiveOneNoteName(secName)) continue;
+
+      const rawPages = toArray(rawSec.pages);
+      const cleanPages = [];
+
+      for (const rawPage of rawPages) {
+        if (!rawPage || typeof rawPage !== 'object') continue;
+        const pageId = typeof rawPage.id === 'string' ? rawPage.id.trim() : '';
+        const pageName = typeof rawPage.name === 'string' ? rawPage.name.trim() : '';
+        const lastModified = typeof rawPage.lastModified === 'string' ? rawPage.lastModified.trim() : '';
+        if (!pageId || !pageName || isSensitiveOneNoteName(pageName)) continue;
+
+        cleanPages.push({
+          id: pageId,
+          name: pageName,
+          lastModified,
+        });
+        allRecentCandidates.push({
+          id: pageId,
+          name: pageName,
+          notebook: nbName,
+          section: secName,
+          lastModified,
+        });
+      }
+
+      cleanPages.sort((a, b) => compareIsoDesc(a.lastModified, b.lastModified));
+      notebookPageCount += cleanPages.length;
+      totalPages += cleanPages.length;
+
+      sections.push({
+        id: secId,
+        name: secName,
+        pages: cleanPages.slice(0, 60),
+      });
+    }
+
+    notebooks.push({
+      id: nbId,
+      name: nbName,
+      sectionCount: sections.length,
+      pageCount: notebookPageCount,
+      sections,
+    });
+  }
+
+  allRecentCandidates.sort((a, b) => compareIsoDesc(a.lastModified, b.lastModified));
+  const recentPages = allRecentCandidates.slice(0, MAX_ONENOTE_RECENT_PAGES);
+
+  return {
+    ok: true,
+    available: true,
+    source: 'onenote-desktop',
+    notebooks,
+    recentPages,
+    totalPages,
+  };
+}
+
+async function readLocalOneNotePage(rawPageId) {
+  const pageId = typeof rawPageId === 'string' ? rawPageId.trim() : '';
+  if (!pageId || pageId.length > 160 || !/^[{}A-Za-z0-9\-]+$/.test(pageId)) {
+    return {
+      status: 400,
+      payload: {
+        ok: false,
+        error: 'Ungültige OneNote-Seiten-ID.',
+      },
+    };
+  }
+
+  if (process.platform !== 'win32') {
+    return {
+      status: 200,
+      payload: {
+        ok: false,
+        available: false,
+        id: pageId,
+        title: '',
+        content: '',
+        message: 'Lokales OneNote Desktop nicht gefunden.',
+      },
+    };
+  }
+
+  const parsed = await runOneNotePowerShell(ONENOTE_PAGE_PS_B64, {
+    OPENSTUDY_ONENOTE_PAGE_ID: pageId,
+  });
+
+  if (!parsed || parsed.available !== true) {
+    return {
+      status: 200,
+      payload: {
+        ok: false,
+        available: false,
+        id: pageId,
+        title: '',
+        content: '',
+        message: 'Lokales OneNote Desktop nicht gefunden.',
+      },
+    };
+  }
+
+  if (parsed.error) {
+    return {
+      status: 404,
+      payload: {
+        ok: false,
+        available: true,
+        id: pageId,
+        error: 'OneNote-Seite konnte nicht gelesen werden.',
+      },
+    };
+  }
+
+  const title = stripMarkupToReadableText(parsed.title || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+
+  if (isSensitiveOneNoteName(title)) {
+    return {
+      status: 403,
+      payload: {
+        ok: false,
+        redacted: true,
+        error: 'Geschützte OneNote-Seite wurde aus Datenschutzgründen blockiert.',
+      },
+    };
+  }
+
+  const rawLines = toArray(parsed.lines);
+  const cleanedLines = [];
+  for (const rawLine of rawLines) {
+    if (typeof rawLine !== 'string') continue;
+    const cleaned = stripMarkupToReadableText(rawLine);
+    if (cleaned) {
+      cleanedLines.push(cleaned);
+    }
+  }
+
+  let content = cleanedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (content.length > MAX_ONENOTE_PAGE_CHARS) {
+    content = content.slice(0, MAX_ONENOTE_PAGE_CHARS).trimEnd();
+  }
+
+  return {
+    status: 200,
+    payload: {
+      ok: true,
+      id: pageId,
+      title: title || 'OneNote-Seite',
+      content,
+    },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Hermes Background Auto-Sync Cron (Obsidian + OneNote + Next 30 Days)      */
+/* -------------------------------------------------------------------------- */
+
+const SCHEDULE_KEYWORD_PATTERN =
+  /(prüfung|pruefung|test|klausur|exam|abgabe|vortrag|präsentation|praesentation|termin|quiz|arbeit|aufgabe|due|deadline)/i;
+
+let autoSyncTimer = null;
+let autoSyncNextRunAt = null;
+let activeSyncPromise = null;
+
+function getHermesSyncConfigPath() {
+  return path.join(getHermesDir(), 'sync-config.json');
+}
+
+function clampSyncIntervalMinutes(rawValue) {
+  const num = Number(rawValue);
+  if (!Number.isFinite(num)) return SYNC_DEFAULT_INTERVAL_MINUTES;
+  return Math.min(SYNC_MAX_INTERVAL_MINUTES, Math.max(SYNC_MIN_INTERVAL_MINUTES, Math.round(num)));
+}
+
+function createDefaultSyncConfig() {
+  return {
+    enabled: false,
+    intervalMinutes: SYNC_DEFAULT_INTERVAL_MINUTES,
+    vaultPath: '',
+    portalUrl: '',
+    scanOneNote: process.platform === 'win32',
+    lastRunAt: '',
+    lastSummary: {
+      obsidianNotesCount: 0,
+      oneNotePagesCount: 0,
+      upcoming30Days: [],
+    },
+  };
+}
+
+function sanitizeSyncPortalUrl(rawUrl) {
+  if (rawUrl === undefined || rawUrl === null) return { ok: true, url: '' };
+  if (typeof rawUrl !== 'string') {
+    return { ok: false, error: 'Feld "portalUrl" muss ein Text sein.' };
+  }
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return { ok: true, url: '' };
+  if (trimmed.length > 300) {
+    return { ok: false, error: 'Feld "portalUrl" ist zu lang (max. 300 Zeichen).' };
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { ok: false, error: 'Ungültige "portalUrl". Erwartet wird eine http:// oder https:// Adresse.' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: 'Für "portalUrl" sind nur http:// und https:// erlaubt.' };
+  }
+  if (parsed.username || parsed.password) {
+    return { ok: false, error: 'Zugangsdaten in "portalUrl" sind nicht erlaubt.' };
+  }
+  return { ok: true, url: parsed.toString() };
+}
+
+function sanitizeSyncVaultPath(rawPath) {
+  if (rawPath === undefined || rawPath === null) return { ok: true, vaultPath: '' };
+  if (typeof rawPath !== 'string') {
+    return { ok: false, error: 'Feld "vaultPath" muss ein Text sein.' };
+  }
+  const trimmed = rawPath.trim();
+  if (!trimmed) return { ok: true, vaultPath: '' };
+  if (trimmed.length > 500) {
+    return { ok: false, error: 'Feld "vaultPath" ist zu lang (max. 500 Zeichen).' };
+  }
+  const resolved = path.resolve(trimmed);
+  if (isForbiddenVaultRoot(resolved)) {
+    return {
+      ok: false,
+      error: 'Systemordner oder Laufwerkswurzeln sind als Obsidian-Vault nicht erlaubt.',
+    };
+  }
+  return { ok: true, vaultPath: resolved };
+}
+
+function sanitizeUpcomingList(rawList) {
+  if (!Array.isArray(rawList)) return [];
+  const out = [];
+  for (const item of rawList.slice(0, 80)) {
+    if (!item || typeof item !== 'object') continue;
+    const title = typeof item.title === 'string' ? item.title.trim().slice(0, 140) : '';
+    const date = typeof item.date === 'string' ? item.date.trim() : '';
+    const courseTitle = typeof item.courseTitle === 'string' ? item.courseTitle.trim().slice(0, 80) : 'Allgemein';
+    const source = typeof item.source === 'string' ? item.source.trim().slice(0, 32) : 'obsidian';
+    if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    out.push({ title, date, courseTitle: courseTitle || 'Allgemein', source: source || 'obsidian' });
+  }
+  return out;
+}
+
+async function loadSyncConfig() {
+  const filePath = getHermesSyncConfigPath();
+  const defaults = createDefaultSyncConfig();
+  try {
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const checkedVault = sanitizeSyncVaultPath(parsed.vaultPath);
+    const checkedPortal = sanitizeSyncPortalUrl(parsed.portalUrl);
+    const rawSummary = parsed.lastSummary && typeof parsed.lastSummary === 'object' ? parsed.lastSummary : {};
+
+    return {
+      enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : defaults.enabled,
+      intervalMinutes: clampSyncIntervalMinutes(parsed.intervalMinutes),
+      vaultPath: checkedVault.ok ? checkedVault.vaultPath : '',
+      portalUrl: checkedPortal.ok ? checkedPortal.url : '',
+      scanOneNote: typeof parsed.scanOneNote === 'boolean' ? parsed.scanOneNote : defaults.scanOneNote,
+      lastRunAt: typeof parsed.lastRunAt === 'string' ? parsed.lastRunAt : '',
+      lastSummary: {
+        obsidianNotesCount:
+          typeof rawSummary.obsidianNotesCount === 'number' && Number.isFinite(rawSummary.obsidianNotesCount)
+            ? Math.max(0, Math.round(rawSummary.obsidianNotesCount))
+            : 0,
+        oneNotePagesCount:
+          typeof rawSummary.oneNotePagesCount === 'number' && Number.isFinite(rawSummary.oneNotePagesCount)
+            ? Math.max(0, Math.round(rawSummary.oneNotePagesCount))
+            : 0,
+        upcoming30Days: sanitizeUpcomingList(rawSummary.upcoming30Days),
+      },
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+async function saveSyncConfig(config) {
+  const filePath = getHermesSyncConfigPath();
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+
+  const checkedVault = sanitizeSyncVaultPath(config.vaultPath);
+  const checkedPortal = sanitizeSyncPortalUrl(config.portalUrl);
+  const rawSummary = config.lastSummary && typeof config.lastSummary === 'object' ? config.lastSummary : {};
+
+  const nextPayload = {
+    enabled: Boolean(config.enabled),
+    intervalMinutes: clampSyncIntervalMinutes(config.intervalMinutes),
+    vaultPath: checkedVault.ok ? checkedVault.vaultPath : '',
+    portalUrl: checkedPortal.ok ? checkedPortal.url : '',
+    scanOneNote: Boolean(config.scanOneNote),
+    lastRunAt: typeof config.lastRunAt === 'string' ? config.lastRunAt : '',
+    lastSummary: {
+      obsidianNotesCount:
+        typeof rawSummary.obsidianNotesCount === 'number' && Number.isFinite(rawSummary.obsidianNotesCount)
+          ? Math.max(0, Math.round(rawSummary.obsidianNotesCount))
+          : 0,
+      oneNotePagesCount:
+        typeof rawSummary.oneNotePagesCount === 'number' && Number.isFinite(rawSummary.oneNotePagesCount)
+          ? Math.max(0, Math.round(rawSummary.oneNotePagesCount))
+          : 0,
+      upcoming30Days: sanitizeUpcomingList(rawSummary.upcoming30Days),
+    },
+  };
+
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tempPath, `${JSON.stringify(nextPayload, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  await fsp.rename(tempPath, filePath);
+  return nextPayload;
+}
+
+function formatLocalIsoDate(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function toValidIsoDate(year, month, day) {
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const candidate = new Date(year, month - 1, day);
+  if (
+    candidate.getFullYear() !== year ||
+    candidate.getMonth() !== month - 1 ||
+    candidate.getDate() !== day
+  ) {
+    return null;
+  }
+  return formatLocalIsoDate(candidate);
+}
+
+function extractIsoDatesFromLine(line) {
+  const found = new Set();
+  const isoRegex = /\b(20\d{2})-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])\b/g;
+  const euRegex = /\b(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.(20\d{2})\b/g;
+
+  let match;
+  while ((match = isoRegex.exec(line)) !== null) {
+    const iso = toValidIsoDate(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (iso) found.add(iso);
+  }
+  while ((match = euRegex.exec(line)) !== null) {
+    const iso = toValidIsoDate(Number(match[3]), Number(match[2]), Number(match[1]));
+    if (iso) found.add(iso);
+  }
+  return Array.from(found);
+}
+
+function inferCourseTitleFromNote(note) {
+  const relPath = typeof note.path === 'string' ? note.path : '';
+  const parts = relPath.split('/').filter(Boolean);
+  if (parts.length > 1) {
+    for (let i = 0; i < parts.length - 1; i += 1) {
+      const cleaned = parts[i].replace(/^\d+[\s._-]+/, '').replace(/[_-]+/g, ' ').trim();
+      if (
+        cleaned &&
+        !/^(notes|notizen|inbox|daily|tagebuch|journal|archive|archiv|templates|vorlagen|misc|allgemein)$/i.test(
+          cleaned
+        )
+      ) {
+        return cleaned.slice(0, 60);
+      }
+    }
+  }
+  const titlePart = typeof note.title === 'string' ? note.title.trim() : '';
+  return titlePart ? titlePart.slice(0, 60) : 'Allgemein';
+}
+
+function cleanScheduleLineTitle(line, fallbackTitle) {
+  const cleaned = String(line || '')
+    .replace(/^\s*[-*+]\s*\[[ xX]\]\s*/, '')
+    .replace(/^\s*[-*+]\s+/, '')
+    .replace(/^\s*#{1,6}\s+/, '')
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
+    .replace(/\[\[([^\]]+)\]\]/g, '$1')
+    .replace(/[*_`~]/g, '')
+    .replace(/^\s*\|+\s*|\s*\|+\s*$/g, '')
+    .replace(/\s*\|\s*/g, ' — ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned || cleaned.length < 4) {
+    return String(fallbackTitle || 'Termin').trim().slice(0, 110);
+  }
+  return cleaned.slice(0, 110);
+}
+
+function getNext30DaysBounds() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(start);
+  end.setDate(start.getDate() + SYNC_UPCOMING_DAYS);
+  return {
+    startIso: formatLocalIsoDate(start),
+    endIso: formatLocalIsoDate(end),
+  };
+}
+
+function deduplicateAndSortUpcoming(items) {
+  const seen = new Set();
+  const result = [];
+  for (const item of items) {
+    const normTitle = item.title
+      .toLowerCase()
+      .replace(/\b20\d{2}-\d{2}-\d{2}\b|\b\d{1,2}\.\d{1,2}\.20\d{2}\b/g, '')
+      .replace(/[^a-z0-9äöü]+/g, ' ')
+      .trim()
+      .slice(0, 60);
+    const key = `${item.date}|${normTitle || item.title.toLowerCase().slice(0, 40)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  result.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return a.title.localeCompare(b.title);
+  });
+  return result.slice(0, 80);
+}
+
+function extractUpcoming30DayEventsFromNotes(notes) {
+  const { startIso, endIso } = getNext30DaysBounds();
+  const extracted = [];
+
+  for (const note of notes) {
+    if (!note || typeof note.content !== 'string') continue;
+    const lines = note.content.replace(/\r\n/g, '\n').split('\n');
+    const noteTitle = typeof note.title === 'string' ? note.title : '';
+    const titleHasKeyword = SCHEDULE_KEYWORD_PATTERN.test(noteTitle);
+    const courseTitle = inferCourseTitleFromNote(note);
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!line || line.length < 8) continue;
+
+      const dates = extractIsoDatesFromLine(line).filter((d) => d >= startIso && d <= endIso);
+      if (dates.length === 0) continue;
+
+      const prevLine = i > 0 ? lines[i - 1] : '';
+      const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+      const nearKeyword =
+        SCHEDULE_KEYWORD_PATTERN.test(line) ||
+        SCHEDULE_KEYWORD_PATTERN.test(prevLine) ||
+        SCHEDULE_KEYWORD_PATTERN.test(nextLine) ||
+        titleHasKeyword;
+
+      if (!nearKeyword) continue;
+
+      const title = cleanScheduleLineTitle(line, noteTitle);
+      for (const date of dates) {
+        extracted.push({
+          title,
+          date,
+          courseTitle,
+          source: 'obsidian',
+        });
+      }
+    }
+  }
+
+  return extracted;
+}
+
+function extractUpcoming30DayEventsFromOneNotePages(recentPages) {
+  const { startIso, endIso } = getNext30DaysBounds();
+  const extracted = [];
+
+  for (const page of recentPages) {
+    if (!page || typeof page.name !== 'string') continue;
+    const dates = extractIsoDatesFromLine(page.name).filter((d) => d >= startIso && d <= endIso);
+    if (dates.length === 0) continue;
+    if (!SCHEDULE_KEYWORD_PATTERN.test(page.name)) continue;
+
+    const courseTitle =
+      (typeof page.section === 'string' && page.section.trim()) ||
+      (typeof page.notebook === 'string' && page.notebook.trim()) ||
+      'OneNote';
+
+    for (const date of dates) {
+      extracted.push({
+        title: page.name.trim().slice(0, 110),
+        date,
+        courseTitle: courseTitle.slice(0, 60),
+        source: 'onenote',
+      });
+    }
+  }
+
+  return extracted;
+}
+
+async function executeAutoSyncPass(inputConfig, options = {}) {
+  const baseConfig = inputConfig ? { ...(await loadSyncConfig()), ...inputConfig } : await loadSyncConfig();
+  const allowAutoDetect = options.allowAutoDetect !== undefined ? Boolean(options.allowAutoDetect) : baseConfig.enabled;
+
+  let effectiveVaultPath = baseConfig.vaultPath || '';
+  if (!effectiveVaultPath && allowAutoDetect) {
+    const detected = await detectObsidianVaults();
+    const openVault = detected.vaults.find((v) => v.isOpen) || detected.vaults[0];
+    if (openVault) {
+      effectiveVaultPath = openVault.path;
+    }
+  }
+
+  let obsidianNotesCount = 0;
+  let sampleObsidianNotes = [];
+  let upcomingFromObsidian = [];
+
+  if (effectiveVaultPath) {
+    try {
+      const scanResult = await scanObsidianVault(effectiveVaultPath);
+      obsidianNotesCount = scanResult.notes.length;
+      sampleObsidianNotes = scanResult.notes.slice(0, SYNC_SAMPLE_OBSIDIAN_LIMIT);
+      upcomingFromObsidian = extractUpcoming30DayEventsFromNotes(scanResult.notes);
+    } catch {
+      obsidianNotesCount = 0;
+      sampleObsidianNotes = [];
+      upcomingFromObsidian = [];
+    }
+  }
+
+  let oneNotePagesCount = 0;
+  let recentOneNotePages = [];
+  let upcomingFromOneNote = [];
+
+  if (baseConfig.scanOneNote && process.platform === 'win32') {
+    const oneNoteResult = await scanLocalOneNote();
+    if (oneNoteResult.available) {
+      oneNotePagesCount = oneNoteResult.totalPages || 0;
+      recentOneNotePages = oneNoteResult.recentPages || [];
+      upcomingFromOneNote = extractUpcoming30DayEventsFromOneNotePages(recentOneNotePages);
+    }
+  }
+
+  const upcoming30Days = deduplicateAndSortUpcoming([
+    ...upcomingFromObsidian,
+    ...upcomingFromOneNote,
+  ]);
+
+  const savedConfig = await saveSyncConfig({
+    ...baseConfig,
+    lastRunAt: new Date().toISOString(),
+    lastSummary: {
+      obsidianNotesCount,
+      oneNotePagesCount,
+      upcoming30Days,
+    },
+  });
+
+  return {
+    ok: true,
+    config: savedConfig,
+    summary: {
+      obsidianNotesCount,
+      oneNotePagesCount,
+      upcoming30Days,
+      recentOneNotePages,
+      sampleObsidianNotes,
+    },
+  };
+}
+
+function runAutoSyncPass(inputConfig = null, options = {}) {
+  if (activeSyncPromise) {
+    return activeSyncPromise;
+  }
+  activeSyncPromise = executeAutoSyncPass(inputConfig, options).finally(() => {
+    activeSyncPromise = null;
+  });
+  return activeSyncPromise;
+}
+
+function stopAutoSyncTimer() {
+  if (autoSyncTimer) {
+    clearInterval(autoSyncTimer);
+    autoSyncTimer = null;
+  }
+  autoSyncNextRunAt = null;
+}
+
+function scheduleAutoSyncTimer(config) {
+  stopAutoSyncTimer();
+  if (!config || !config.enabled) {
+    return;
+  }
+  const intervalMinutes = clampSyncIntervalMinutes(config.intervalMinutes);
+  const intervalMs = intervalMinutes * 60_000;
+  autoSyncNextRunAt = new Date(Date.now() + intervalMs).toISOString();
+
+  autoSyncTimer = setInterval(() => {
+    autoSyncNextRunAt = new Date(Date.now() + intervalMs).toISOString();
+    runAutoSyncPass(null, { allowAutoDetect: true }).catch(() => {
+      // keep background auto-sync resilient
+    });
+  }, intervalMs);
+  autoSyncTimer.unref();
+}
+
+async function initAutoSyncScheduler() {
+  try {
+    const config = await loadSyncConfig();
+    if (config.enabled) {
+      scheduleAutoSyncTimer(config);
+      console.log(
+        `[OpenStudy Bridge] Hermes Auto-Sync Cron active (every ${config.intervalMinutes} min)`
+      );
+    }
+  } catch {
+    // ignore startup sync config load failure
+  }
+}
+
 async function handleRequest(req, res) {
   if (!applyCorsHeaders(req, res)) {
     sendJson(res, 403, {
@@ -2027,15 +3344,177 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (req.method === 'GET' && (pathname === '/api/obsidian' || pathname === '/api/obsidian/notes')) {
+  if (req.method === 'GET' && pathname === '/api/obsidian/detect') {
     try {
-      const dir = parsedUrl.searchParams.get('dir') || '';
+      const result = await detectObsidianVaults();
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not detect Obsidian vaults.',
+      });
+    }
+    return;
+  }
+
+  if (
+    (req.method === 'GET' || req.method === 'POST') &&
+    (pathname === '/api/obsidian' || pathname === '/api/obsidian/notes')
+  ) {
+    try {
+      let dir =
+        parsedUrl.searchParams.get('vaultPath') ||
+        parsedUrl.searchParams.get('dir') ||
+        '';
+      if (req.method === 'POST') {
+        const body = await readJsonBody(req);
+        if (typeof body.vaultPath === 'string' && body.vaultPath.trim()) {
+          dir = body.vaultPath.trim();
+        } else if (typeof body.dir === 'string' && body.dir.trim()) {
+          dir = body.dir.trim();
+        }
+      }
       const result = await scanObsidianVault(dir);
       sendJson(res, 200, result);
     } catch (err) {
       sendJson(res, err.status || 500, {
         ok: false,
         error: err.message || 'Could not scan Obsidian directory.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/onenote/scan') {
+    const result = await scanLocalOneNote();
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/onenote/page') {
+    const pageId = parsedUrl.searchParams.get('id') || '';
+    const result = await readLocalOneNotePage(pageId);
+    sendJson(res, result.status || 200, result.payload);
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/sync/status') {
+    try {
+      const config = await loadSyncConfig();
+      sendJson(res, 200, {
+        ok: true,
+        config,
+        running: Boolean(activeSyncPromise),
+        nextRunAt: config.enabled ? autoSyncNextRunAt : null,
+        storage: '~/.openstudy/hermes/sync-config.json',
+      });
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not load Hermes auto-sync status.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/sync/config') {
+    try {
+      const body = await readJsonBody(req);
+      const current = await loadSyncConfig();
+
+      const nextVaultCheck =
+        body.vaultPath !== undefined
+          ? sanitizeSyncVaultPath(body.vaultPath)
+          : { ok: true, vaultPath: current.vaultPath };
+      if (!nextVaultCheck.ok) {
+        sendJson(res, 400, { ok: false, error: nextVaultCheck.error });
+        return;
+      }
+
+      const nextPortalCheck =
+        body.portalUrl !== undefined
+          ? sanitizeSyncPortalUrl(body.portalUrl)
+          : { ok: true, url: current.portalUrl };
+      if (!nextPortalCheck.ok) {
+        sendJson(res, 400, { ok: false, error: nextPortalCheck.error });
+        return;
+      }
+
+      const nextConfig = {
+        ...current,
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : current.enabled,
+        intervalMinutes:
+          body.intervalMinutes !== undefined
+            ? clampSyncIntervalMinutes(body.intervalMinutes)
+            : current.intervalMinutes,
+        vaultPath: nextVaultCheck.vaultPath,
+        portalUrl: nextPortalCheck.url,
+        scanOneNote:
+          typeof body.scanOneNote === 'boolean' ? body.scanOneNote : current.scanOneNote,
+      };
+
+      const saved = await saveSyncConfig(nextConfig);
+      scheduleAutoSyncTimer(saved);
+
+      sendJson(res, 200, {
+        ok: true,
+        config: saved,
+        nextRunAt: saved.enabled ? autoSyncNextRunAt : null,
+        storage: '~/.openstudy/hermes/sync-config.json',
+      });
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not update Hermes auto-sync config.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/sync/run') {
+    try {
+      const body = await readJsonBody(req);
+      const overrides = {};
+
+      if (body.vaultPath !== undefined) {
+        const checkedVault = sanitizeSyncVaultPath(body.vaultPath);
+        if (!checkedVault.ok) {
+          sendJson(res, 400, { ok: false, error: checkedVault.error });
+          return;
+        }
+        overrides.vaultPath = checkedVault.vaultPath;
+      }
+      if (body.portalUrl !== undefined) {
+        const checkedPortal = sanitizeSyncPortalUrl(body.portalUrl);
+        if (!checkedPortal.ok) {
+          sendJson(res, 400, { ok: false, error: checkedPortal.error });
+          return;
+        }
+        overrides.portalUrl = checkedPortal.url;
+      }
+      if (typeof body.scanOneNote === 'boolean') {
+        overrides.scanOneNote = body.scanOneNote;
+      }
+      if (typeof body.enabled === 'boolean') {
+        overrides.enabled = body.enabled;
+      }
+      if (body.intervalMinutes !== undefined) {
+        overrides.intervalMinutes = clampSyncIntervalMinutes(body.intervalMinutes);
+      }
+
+      const hasOverrides = Object.keys(overrides).length > 0;
+      const result = await runAutoSyncPass(hasOverrides ? overrides : null, {
+        allowAutoDetect: true,
+      });
+      if (hasOverrides && (overrides.enabled !== undefined || overrides.intervalMinutes !== undefined)) {
+        scheduleAutoSyncTimer(result.config);
+      }
+
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Hermes auto-sync pass failed.',
       });
     }
     return;
@@ -2239,6 +3718,19 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/api/desktop/screenshot') {
+    try {
+      const result = await captureDesktopScreenshot(parsedUrl.searchParams);
+      sendJson(res, result.status || 200, result.payload);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Desktop-Screenshot konnte nicht erstellt werden.',
+      });
+    }
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/api/desktop/highlight') {
     try {
       const body = await readJsonBody(req);
@@ -2341,9 +3833,11 @@ server.listen(PORT, HOST, () => {
   const toolLabel = tools.length > 0 ? tools.join(', ') : 'none detected on PATH';
   console.log(`[OpenStudy Bridge v${VERSION}] Listening on http://${HOST}:${PORT}`);
   console.log(`[OpenStudy Bridge] Local CLIs detected: ${toolLabel}`);
+  void initAutoSyncScheduler();
 });
 
 function shutdown() {
+  stopAutoSyncTimer();
   cancelActiveHighlight();
   server.close(() => {
     process.exit(0);

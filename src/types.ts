@@ -130,6 +130,11 @@ export interface ProviderConfig {
   hermesGatewayUrl: string;
   hermesModel: string;
   hermesApiKey: string;
+  schoolPortalUrl: string;
+  obsidianVaultPath: string;
+  autoSyncEnabled: boolean;
+  autoSyncIntervalMinutes: number;
+  lastAutoSyncAt: string;
 }
 
 export interface HermesMemoryEntry {
