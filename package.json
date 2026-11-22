@@ -1,0 +1,29 @@
+{
+  "name": "openstudy",
+  "private": false,
+  "version": "1.0.0",
+  "description": "Free, privacy-first, open-source AI learning studio with real-time voice tutor, built-in Notion-style notes, Obsidian sync, focus planner, and multi-provider BYOK support.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "bridge": "node bridge/server.mjs",
+    "privacy-check": "node scripts/privacy-audit.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "latest",
+    "lucide-react": "^0.511.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.7",
+    "@types/react": "^19.1.4",
+    "@types/react-dom": "^19.1.4",
+    "@vitejs/plugin-react": "^4.4.1",
+    "tailwindcss": "^4.1.7",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

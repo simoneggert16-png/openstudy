@@ -1,0 +1,30 @@
+# Dependencies & builds
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+
+# Environment & secrets — NEVER commit keys or credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
+
+# Private local user data & vaults — NEVER commit personal study data
+data/private/
+private/
+vault/
+obsidian-vault/
+*.sqlite
+*.db
+
+# OS & editor artifacts
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

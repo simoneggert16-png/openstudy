@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenStudy — Freie, lokale KI-Lernplattform (Open Source)</title>
+    <meta
+      name="description"
+      content="Kostenlose, lokale Open-Source-Lernplattform mit Echtzeit-Voice-Tutor, integriertem Notion-Block-Editor, Obsidian-Sync, Fokus-Timer und freier KI-Anbieterwahl."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a href="#top" class="brand" aria-label="OpenStudy Startseite">
+          <span class="brand-mark" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+            </svg>
+          </span>
+          <span>OpenStudy</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Hauptnavigation">
+          <a href="#funktionen">Funktionen</a>
+          <a href="#einblicke">Einblicke</a>
+          <a href="#datenschutz">Datenschutz</a>
+          <a href="#installation">Installation</a>
+        </nav>
+
+        <div class="header-actions">
+          <a href="../dist/index.html?mode=demo" class="btn btn-ghost js-demo-link">Demo testen</a>
+          <a
+            href="#installation"
+            class="btn btn-secondary"
+            id="github-nav-link"
+            title="Quellcode und Releases ansehen"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+              <path d="M9 18c-4.51 2-5-2-7-2" />
+            </svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="container">
+          <div class="hero-grid">
+            <div>
+              <div class="hero-meta">
+                <span class="meta-dot" aria-hidden="true"></span>
+                <span>Freie Open-Source-Lernplattform · 0 CHF · Lokal auf deinem Gerät</span>
+              </div>
+
+              <h1>Ruhig lernen mit eigenem KI-Sprachtutor, Notizen und Fokus-Planer.</h1>
+
+              <p class="hero-lead">
+                OpenStudy vereint Echtzeit-Sprachtraining, eine integrierte Notion-Alternative, lokalen
+                Obsidian-Sync und Karteikarten in einer klaren Oberfläche — für Schule, Studium und
+                Selbststudium. Kostenlos startbar und vollständig unter deiner Kontrolle.
+              </p>
+
+              <div class="hero-cta-row">
+                <a
+                  id="primary-download-btn"
+                  href="../installer/windows/OpenStudy-Setup.exe"
+                  class="btn btn-accent btn-lg"
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" x2="12" y1="15" y2="3" />
+                  </svg>
+                  <span id="primary-download-label">Für Windows herunterladen</span>
+                  <span id="primary-download-file" class="btn-file-tag">OpenStudy-Setup.exe</span>
+                </a>
+
+                <a
+                  href="../dist/index.html?mode=demo"
+                  class="btn btn-secondary btn-lg js-demo-link"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polygon points="6 3 20 12 6 21 6 3" />
+                  </svg>
+                  <span>Direkt im Browser testen (Demo)</span>
+                </a>
+              </div>
+
+              <div class="os-switcher" role="group" aria-label="Betriebssystem wählen">
+                <span id="os-detected-note">System wählen:</span>
+                <button type="button" class="os-pill is-active" data-os="windows">Windows</button>
+                <button type="button" class="os-pill" data-os="macos">macOS</button>
+                <button type="button" class="os-pill" data-os="linux">Linux</button>
+                <span>·</span>
+                <a href="#installation" style="color: var(--accent); font-weight: 500;">Alle Installer &amp; Releases</a>
+              </div>
+            </div>
+
+            <div class="hero-visual">
+              <div class="window-bar">
+                <span class="window-dots" aria-hidden="true">
+                  <span></span><span></span><span></span>
+                </span>
+                <span class="font-mono">OpenStudy · Lokal</span>
+                <span>MIT Open Source</span>
+              </div>
+              <div class="hero-frame" data-preview-wrap>
+                <img
+                  src="../docs/previews/01-dashboard.png"
+                  alt="OpenStudy Dashboard mit Kursen, Tagesplan und Lernzielen"
+                  loading="eager"
+                />
+              </div>
+              <div class="hero-caption-bar">
+                <span>Dashboard, Tagesplan &amp; Prüfungs-Überblick</span>
+                <span class="font-mono" style="color: var(--accent);">0 Tracking</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="trust-strip" aria-label="Kernversprechen">
+            <div class="trust-item">
+              <div class="trust-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                  <path d="m9 12 2 2 4-4" />
+                </svg>
+                <span>0 CHF Start</span>
+              </div>
+              <p>Google AI Studio Free Tier mit Sicherheits-Sperre oder 100 % offline mit Ollama.</p>
+            </div>
+            <div class="trust-item">
+              <div class="trust-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                <span>Lokal gespeichert</span>
+              </div>
+              <p>Kein Konto, kein Cloud-Zwang. Notizen und API-Keys bleiben auf deinem Computer.</p>
+            </div>
+            <div class="trust-item">
+              <div class="trust-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" x2="12" y1="19" y2="22" />
+                </svg>
+                <span>Echtzeit-Voice-Tutor</span>
+              </div>
+              <p>Frei sprechend üben mit Stimmen-Vorschau, ruhigem Tempo und Sprach-Sperre.</p>
+            </div>
+            <div class="trust-item">
+              <div class="trust-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span>Notion &amp; Obsidian</span>
+              </div>
+              <p>Eigener Block-Editor sofort nutzbar oder bestehende Obsidian-Vaults verknüpfen.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="einblicke" class="section">
+        <div class="container">
+          <div class="section-header">
+            <h2>Ein Blick ins Lernstudio</h2>
+            <p>
+              Gestaltet für lange Lerneinheiten ohne visuelle Unruhe. Klicke auf eine Ansicht, um das
+              Vorschaubild in voller Größe zu prüfen.
+            </p>
+          </div>
+
+          <div class="gallery-grid">
+            <article class="gallery-card">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-src="../docs/previews/01-dashboard.png"
+                data-title="Dashboard &amp; Tagesplan"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="../docs/previews/01-dashboard.png"
+                    alt="Screenshot des OpenStudy Dashboards mit Kursübersicht und Tagesplan"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono">docs/previews/01-dashboard.png</span>
+                    <span>Vorschaubild wird nach dem ersten Build angezeigt</span>
+                  </div>
+                </div>
+                <div class="gallery-body">
+                  <div class="gallery-title-row">
+                    <h3>Dashboard &amp; Tagesplan</h3>
+                    <span class="gallery-tag">Überblick</span>
+                  </div>
+                  <p>
+                    Alle Kurse, anstehende Prüfungen, Lernziele und dein tägliches Lernziel klar
+                    strukturiert auf einer Seite.
+                  </p>
+                </div>
+              </button>
+            </article>
+
+            <article class="gallery-card">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-src="../docs/previews/02-voice-tutor.png"
+                data-title="Echtzeit-Voice-Tutor"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="../docs/previews/02-voice-tutor.png"
+                    alt="Screenshot des OpenStudy Voice Tutors mit Stimmenwahl und Sprach-Sperre"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono">docs/previews/02-voice-tutor.png</span>
+                    <span>Vorschaubild wird nach dem ersten Build angezeigt</span>
+                  </div>
+                </div>
+                <div class="gallery-body">
+                  <div class="gallery-title-row">
+                    <h3>Echtzeit-Voice-Tutor</h3>
+                    <span class="gallery-tag">Sprache &amp; Erklären</span>
+                  </div>
+                  <p>
+                    Sechs Stimmen mit Vorschau, einstellbares Tempo, Language-Lock für Fremdsprachen
+                    und umschaltbarer Tiefenmodus.
+                  </p>
+                </div>
+              </button>
+            </article>
+
+            <article class="gallery-card">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-src="../docs/previews/03-notion-notes.png"
+                data-title="Integrierte Notizen &amp; Obsidian-Sync"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="../docs/previews/03-notion-notes.png"
+                    alt="Screenshot des Block-Editors für Lernnotizen und Obsidian-Anbindung"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono">docs/previews/03-notion-notes.png</span>
+                    <span>Vorschaubild wird nach dem ersten Build angezeigt</span>
+                  </div>
+                </div>
+                <div class="gallery-body">
+                  <div class="gallery-title-row">
+                    <h3>Integrierte Notizen &amp; Obsidian</h3>
+                    <span class="gallery-tag">Wissensspeicher</span>
+                  </div>
+                  <p>
+                    Strukturierte Seiten im Notion-Stil mit Überschriften, Merksätzen, Checklisten
+                    und direktem Lesen deiner lokalen Obsidian-Dateien.
+                  </p>
+                </div>
+              </button>
+            </article>
+
+            <article class="gallery-card">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-src="../docs/previews/04-focus-languages.png"
+                data-title="Fokus-Timer &amp; Sprach-Labor"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="../docs/previews/04-focus-languages.png"
+                    alt="Screenshot von Fokus-Timer, Lernstatistik und Sprach-Übungen"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono">docs/previews/04-focus-languages.png</span>
+                    <span>Vorschaubild wird nach dem ersten Build angezeigt</span>
+                  </div>
+                </div>
+                <div class="gallery-body">
+                  <div class="gallery-title-row">
+                    <h3>Fokus-Timer &amp; Sprach-Labor</h3>
+                    <span class="gallery-tag">Übung &amp; Fokus</span>
+                  </div>
+                  <p>
+                    Pomodoro-Blöcke mit Lernprotokoll, Karteikarten nach Spaced-Repetition-Prinzip
+                    und gezielte Übungen für aktive Sprachsicherheit.
+                  </p>
+                </div>
+              </button>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="funktionen" class="section">
+        <div class="container">
+          <div class="section-header">
+            <h2>Entwickelt für nachhaltiges Verstehen</h2>
+            <p>
+              Vier aufeinander abgestimmte Bausteine ersetzen verstreute Tools — komplett ohne
+              monatliche Gebühren oder Herstellerbindung.
+            </p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-card">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" x2="12" y1="19" y2="22" />
+                </svg>
+              </div>
+              <h3>Free-Tier Voice-Tutor</h3>
+              <p>
+                Besprich komplexe Themen mündlich oder simuliere Prüfungsgespräche — mit direkt
+                konfigurierbarer Stimme und klarem pädagogischem Modus.
+              </p>
+              <ul class="feature-list">
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Stimmen-Preview vor dem Start (6 natürliche Stimmen)</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Einstellbares Sprechtempo (Langsam, Ruhig, Normal)</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Language-Lock &amp; In-Depth-Erklärungen auf Abruf</span>
+                </li>
+              </ul>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="8" x2="16" y1="13" y2="13" />
+                  <line x1="8" x2="13" y1="17" y2="17" />
+                </svg>
+              </div>
+              <h3>Notion-Alternative &amp; Obsidian-Vault</h3>
+              <p>
+                Halte Lernstoff übersichtlich fest, ohne ein weiteres Cloud-Abo. Nutze den
+                eingebauten Block-Editor oder öffne direkt deinen Obsidian-Ordner.
+              </p>
+              <ul class="feature-list">
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Überschriften, Merksatz-Boxen, Code-Blöcke und To-dos</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Lokale Markdown-Notizen &amp; [[Wikilinks]] direkt als Kontext</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Sofort einsatzbereit — ganz ohne externe Einrichtung</span>
+                </li>
+              </ul>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="8" height="8" x="3" y="3" rx="2" />
+                  <rect width="8" height="8" x="13" y="3" rx="2" />
+                  <rect width="8" height="8" x="3" y="13" rx="2" />
+                  <rect width="8" height="8" x="13" y="13" rx="2" />
+                </svg>
+              </div>
+              <h3>Multi-Provider &amp; eigene Agents</h3>
+              <p>
+                Du entscheidest, welches Modell antwortet — vom kostenlosen Free Tier bis zu
+                lokalen Modellen und deinen installierten CLI-Agents.
+              </p>
+              <ul class="feature-list">
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Google AI Studio Free Tier mit aktivem 0-CHF-Schutzschalter</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Komplett offline über lokales Ollama (z. B. Gemma 3)</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Antigravity, Claude Code, Codex CLI, OpenRouter &amp; Anthropic</span>
+                </li>
+              </ul>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                  <path d="M12 8v4" />
+                  <path d="M12 16h.01" />
+                </svg>
+              </div>
+              <h3>100 % Privatsphäre &amp; Open Source</h3>
+              <p>
+                Kein Benutzerkonto, keine Analyse-Skripte, kein Verkauf von Lerndaten. Der gesamte
+                Quellcode steht unter der MIT-Lizenz offen.
+              </p>
+              <ul class="feature-list">
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Alle Notizen, Karten und Keys bleiben lokal im Browser</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>JSON-Backup entfernt API-Schlüssel automatisch beim Export</span>
+                </li>
+                <li>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+                  <span>Funktioniert für Notizen, Karten &amp; Timer auch ganz ohne KI</span>
+                </li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="datenschutz" class="section">
+        <div class="container">
+          <div class="privacy-panel">
+            <div class="privacy-head">
+              <div>
+                <h2>Datenschutz als Grundprinzip, nicht als Aufpreis</h2>
+                <p>
+                  OpenStudy speichert deine Lerninhalte ausschließlich auf deinem Gerät. Nur wenn
+                  du aktiv eine KI-Antwort anfragst, wird der benötigte Kontext direkt an den von
+                  dir gewählten Anbieter oder dein lokales Ollama-Modell gesendet.
+                </p>
+              </div>
+              <span class="privacy-badge">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+                  <path d="m9 12 2 2 4-4" />
+                </svg>
+                <span>0 Tracking · 0 Cloud-Zwang</span>
+              </span>
+            </div>
+
+            <div class="privacy-cols">
+              <div class="privacy-col">
+                <h3>Lokaler Speicher &amp; volle Kontrolle</h3>
+                <p>
+                  Kurse, Lernfortschritt, Fokus-Logs und API-Keys verbleiben im lokalen Speicher
+                  deines Browsers. Du kannst sie jederzeit sichern oder komplett zurücksetzen.
+                </p>
+              </div>
+              <div class="privacy-col">
+                <h3>Eingebaute 0-CHF-Sperre</h3>
+                <p>
+                  Der Free-Only-Schalter begrenzt die Modellauswahl standardmäßig auf kostenlose
+                  Stufen und lokale Anbieter — keine unerwarteten Rechnungen.
+                </p>
+              </div>
+              <div class="privacy-col">
+                <h3>Geprüfte Backup-Exporte</h3>
+                <p>
+                  Beim Export deiner Daten als JSON werden sensible Schlüssel automatisch
+                  herausgefiltert, damit du Backups sicher teilen oder archivieren kannst.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="installation" class="section">
+        <div class="container">
+          <div class="section-header">
+            <h2>Für alle — ohne Vorwissen</h2>
+            <p>
+              In drei klaren Schritten startklar auf Windows, macOS oder Linux. Ideal für
+              Lernende, Eltern, Lehrpersonen und Studierende jeden Alters.
+            </p>
+          </div>
+
+          <div class="steps-grid">
+            <div class="step-card">
+              <span class="step-num font-mono">01</span>
+              <h3>Installer herunterladen</h3>
+              <p>
+                Lade die passende Datei für dein System herunter und starte sie per Doppelklick.
+                Der Assistent prüft automatisch, was auf deinem Computer benötigt wird.
+              </p>
+            </div>
+
+            <div class="step-card">
+              <span class="step-num font-mono">02</span>
+              <h3>Optional: Obsidian gleich mitinstallieren</h3>
+              <p>
+                Während der Einrichtung kannst du per einfachem Häkchen wählen, ob der kostenlose
+                Notiz-Speicher Obsidian automatisch mitinstalliert und verknüpft werden soll.
+              </p>
+            </div>
+
+            <div class="step-card">
+              <span class="step-num font-mono">03</span>
+              <h3>Lernziel wählen &amp; loslegen</h3>
+              <p>
+                Beim ersten Öffnen führt dich der 3-Schritte-Assistent durch Sprache, Tagesziel
+                und optional deinen kostenlosen Google AI Studio Key. Oder starte direkt ohne Key.
+              </p>
+            </div>
+          </div>
+
+          <div class="obsidian-note">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" x2="12" y1="16" y2="12" />
+              <line x1="12" x2="12" y1="8" y2="8.01" />
+            </svg>
+            <div>
+              <strong>Kein Obsidian nötig:</strong> OpenStudy bringt einen vollständigen
+              Notion-ähnlichen Block-Editor direkt mit. Die optionale Obsidian-Checkbox im
+              Installer ist für alle gedacht, die ihre Notizen zusätzlich als eigene lokale
+              Markdown-Dateien pflegen möchten.
+            </div>
+          </div>
+
+          <div class="download-grid">
+            <article class="download-card" data-os-card="windows">
+              <div>
+                <div class="download-card-head">
+                  <span class="download-os-title">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="3" y="3" width="8" height="8" rx="1" />
+                      <rect x="13" y="3" width="8" height="8" rx="1" />
+                      <rect x="3" y="13" width="8" height="8" rx="1" />
+                      <rect x="13" y="13" width="8" height="8" rx="1" />
+                    </svg>
+                    <span>Windows 10 / 11</span>
+                  </span>
+                  <span class="detected-pill js-detected-badge" hidden>Empfohlen</span>
+                </div>
+                <p>Grafischer 1-Klick-Installer mit Desktop-Verknüpfung und optionaler Obsidian-Einrichtung.</p>
+                <span class="download-filename font-mono">OpenStudy-Setup.exe</span>
+              </div>
+              <a
+                href="../installer/windows/OpenStudy-Setup.exe"
+                class="btn btn-secondary"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" x2="12" y1="15" y2="3" />
+                </svg>
+                <span>Windows-Installer laden</span>
+              </a>
+            </article>
+
+            <article class="download-card" data-os-card="macos">
+              <div>
+                <div class="download-card-head">
+                  <span class="download-os-title">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="2" y="4" width="20" height="14" rx="2" />
+                      <line x1="8" x2="16" y1="21" y2="21" />
+                      <line x1="12" x2="12" y1="18" y2="21" />
+                    </svg>
+                    <span>macOS (Apple Silicon &amp; Intel)</span>
+                  </span>
+                  <span class="detected-pill js-detected-badge" hidden>Empfohlen</span>
+                </div>
+                <p>Geführtes Installationsskript per Doppelklick inklusive optionalem Obsidian-Häkchen.</p>
+                <span class="download-filename font-mono">Install-OpenStudy.command</span>
+              </div>
+              <a
+                href="../installer/macos/Install-OpenStudy.command"
+                class="btn btn-secondary"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" x2="12" y1="15" y2="3" />
+                </svg>
+                <span>macOS-Installer laden</span>
+              </a>
+            </article>
+
+            <article class="download-card" data-os-card="linux">
+              <div>
+                <div class="download-card-head">
+                  <span class="download-os-title">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polyline points="4 17 10 11 4 5" />
+                      <line x1="12" x2="20" y1="19" y2="19" />
+                    </svg>
+                    <span>Linux (Desktop &amp; AppImage)</span>
+                  </span>
+                  <span class="detected-pill js-detected-badge" hidden>Empfohlen</span>
+                </div>
+                <p>Shell-Installer für Ubuntu, Fedora, Arch &amp; Debian mit Desktop-Starter und Obsidian-Option.</p>
+                <span class="download-filename font-mono">install-openstudy.sh</span>
+              </div>
+              <a
+                href="../installer/linux/install-openstudy.sh"
+                class="btn btn-secondary"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" x2="12" y1="15" y2="3" />
+                </svg>
+                <span>Linux-Installer laden</span>
+              </a>
+            </article>
+          </div>
+
+          <details class="dev-box">
+            <summary>
+              <span>Für Entwicklerinnen, Entwickler &amp; lokale CLI-Agents (Antigravity, Claude Code, Codex)</span>
+              <span class="font-mono" style="font-size: 12px; color: var(--text-muted);">Quellcode starten</span>
+            </summary>
+            <pre class="dev-commands font-mono"><code># 1. Abhängigkeiten installieren und lokal starten
+npm install
+npm run dev
+
+# 2. Optional: Lokale Agent-Bridge für Antigravity (agy), Claude Code (claude) oder Codex CLI (codex)
+npm run bridge</code></pre>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div>
+          <strong style="font-weight: 600; color: var(--text-primary);">OpenStudy</strong>
+          <span> · Freie, lokale Open-Source-Lernplattform unter MIT-Lizenz</span>
+        </div>
+        <div class="footer-links">
+          <a href="#funktionen">Funktionen</a>
+          <a href="#einblicke">Einblicke</a>
+          <a href="#datenschutz">Datenschutz</a>
+          <a href="#installation">Installation</a>
+          <a href="../dist/index.html?mode=demo" class="js-demo-link">Browser-Demo</a>
+          <a href="../LICENSE">MIT-Lizenz</a>
+        </div>
+      </div>
+    </footer>
+
+    <div class="lightbox" id="preview-lightbox" role="dialog" aria-modal="true" aria-labelledby="lightbox-title">
+      <div class="lightbox-dialog">
+        <div class="lightbox-bar">
+          <span id="lightbox-title" class="lightbox-title">Vorschau</span>
+          <button type="button" class="btn btn-ghost" id="lightbox-close" aria-label="Vorschau schließen">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="18" x2="6" y1="6" y2="18" />
+              <line x1="6" x2="18" y1="6" y2="18" />
+            </svg>
+            <span>Schließen</span>
+          </button>
+        </div>
+        <div class="lightbox-img-wrap">
+          <img id="lightbox-img" src="" alt="" />
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const OS_CONFIG = {
+          windows: {
+            label: 'Für Windows herunterladen',
+            file: 'OpenStudy-Setup.exe',
+            href: '../installer/windows/OpenStudy-Setup.exe',
+            name: 'Windows',
+          },
+          macos: {
+            label: 'Für macOS herunterladen',
+            file: 'Install-OpenStudy.command',
+            href: '../installer/macos/Install-OpenStudy.command',
+            name: 'macOS',
+          },
+          linux: {
+            label: 'Für Linux herunterladen',
+            file: 'install-openstudy.sh',
+            href: '../installer/linux/install-openstudy.sh',
+            name: 'Linux',
+          },
+        };
+
+        function detectOS() {
+          const ua = (navigator.userAgent || '').toLowerCase();
+          const platform = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '').toLowerCase();
+          if (platform.includes('mac') || ua.includes('mac os') || ua.includes('macintosh')) {
+            return 'macos';
+          }
+          if (platform.includes('linux') || ua.includes('linux') || ua.includes('x11')) {
+            return 'linux';
+          }
+          return 'windows';
+        }
+
+        const detected = detectOS();
+        const primaryBtn = document.getElementById('primary-download-btn');
+        const primaryLabel = document.getElementById('primary-download-label');
+        const primaryFile = document.getElementById('primary-download-file');
+        const detectedNote = document.getElementById('os-detected-note');
+        const pills = document.querySelectorAll('.os-pill');
+        const cards = document.querySelectorAll('[data-os-card]');
+
+        function applyOS(osKey, isAuto) {
+          const cfg = OS_CONFIG[osKey] || OS_CONFIG.windows;
+          if (primaryBtn) primaryBtn.setAttribute('href', cfg.href);
+          if (primaryLabel) primaryLabel.textContent = cfg.label;
+          if (primaryFile) primaryFile.textContent = cfg.file;
+          if (detectedNote && isAuto) {
+            detectedNote.textContent = 'Erkannt: ' + cfg.name + ' · Wechseln:';
+          }
+
+          pills.forEach(function (pill) {
+            pill.classList.toggle('is-active', pill.getAttribute('data-os') === osKey);
+          });
+
+          cards.forEach(function (card) {
+            const match = card.getAttribute('data-os-card') === osKey;
+            card.classList.toggle('is-detected', match);
+            const badge = card.querySelector('.js-detected-badge');
+            if (badge) badge.hidden = !match;
+          });
+        }
+
+        applyOS(detected, true);
+
+        pills.forEach(function (pill) {
+          pill.addEventListener('click', function () {
+            const key = pill.getAttribute('data-os');
+            if (key) applyOS(key, false);
+          });
+        });
+
+        // Graceful fallback if static site is deployed with ./app/ instead of ../dist/
+        if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+          fetch('./app/index.html', { method: 'HEAD' })
+            .then(function (res) {
+              if (res.ok) {
+                document.querySelectorAll('.js-demo-link').forEach(function (link) {
+                  link.setAttribute('href', './app/?mode=demo');
+                });
+              }
+            })
+            .catch(function () {});
+        }
+
+        // Graceful image fallback for preview screenshots before generation
+        document.querySelectorAll('.gallery-media img').forEach(function (img) {
+          img.addEventListener('error', function () {
+            const wrap = img.closest('.gallery-media');
+            if (wrap) wrap.classList.add('is-missing');
+          });
+        });
+
+        // Lightbox preview modal
+        const lightbox = document.getElementById('preview-lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+        const lightboxTitle = document.getElementById('lightbox-title');
+        const lightboxClose = document.getElementById('lightbox-close');
+
+        function closeLightbox() {
+          if (!lightbox) return;
+          lightbox.classList.remove('is-open');
+          document.body.style.overflow = '';
+        }
+
+        document.querySelectorAll('.js-lightbox-open').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const media = btn.querySelector('.gallery-media');
+            if (media && media.classList.contains('is-missing')) return;
+            const src = btn.getAttribute('data-src');
+            const title = btn.getAttribute('data-title') || 'Vorschau';
+            if (!src || !lightbox || !lightboxImg || !lightboxTitle) return;
+            lightboxImg.setAttribute('src', src);
+            lightboxImg.setAttribute('alt', title);
+            lightboxTitle.textContent = title;
+            lightbox.classList.add('is-open');
+            document.body.style.overflow = 'hidden';
+          });
+        });
+
+        if (lightboxClose) {
+          lightboxClose.addEventListener('click', closeLightbox);
+        }
+        if (lightbox) {
+          lightbox.addEventListener('click', function (e) {
+            if (e.target === lightbox) closeLightbox();
+          });
+        }
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') closeLightbox();
+        });
+      })();
+    </script>
+  </body>
+</html>
