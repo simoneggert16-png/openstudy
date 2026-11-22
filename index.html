@@ -1,0 +1,1237 @@
+<!doctype html>
+<html lang="de" data-scheme="focus-cream" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0E4D48" />
+    <title>OpenStudy — Ruhiges Open-Source-Lernstudio</title>
+    <meta
+      name="description"
+      content="Freie Open-Source-Lernplattform mit Hermes Bildschirm-Lehrer, eigenem Sprachtutor, strukturierten Notizen, lokalem Obsidian-Abgleich und Fokus-Planer. Sofort im Browser oder als Desktop-App."
+    />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      (function () {
+        var valid = {
+          'focus-cream': false,
+          'midnight-teal': true,
+          'terracotta-paper': false,
+          'botanical-sage': false,
+          'espresso-ember': true,
+        };
+        var picked = null;
+        try {
+          var q = new URLSearchParams(window.location.search).get('scheme');
+          if (q && Object.prototype.hasOwnProperty.call(valid, q)) picked = q;
+          if (!picked) {
+            var saved = window.localStorage.getItem('openstudy-website-scheme');
+            if (saved && Object.prototype.hasOwnProperty.call(valid, saved)) picked = saved;
+          }
+        } catch (e) {}
+        if (picked) {
+          document.documentElement.setAttribute('data-scheme', picked);
+          document.documentElement.setAttribute('data-theme', valid[picked] ? 'dark' : 'light');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a href="#top" class="brand" aria-label="OpenStudy Startseite">
+          <svg
+            class="brand-ring"
+            viewBox="0 0 64 64"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle cx="32" cy="32" r="21" stroke="var(--accent)" stroke-width="5" />
+            <path
+              d="M32 11 A21 21 0 0 1 53 32"
+              stroke="var(--accent-warm)"
+              stroke-width="5"
+              stroke-linecap="round"
+            />
+            <circle cx="32" cy="32" r="5.5" fill="var(--accent)" />
+          </svg>
+          <span class="brand-wordmark font-display">OpenStudy</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Hauptnavigation">
+          <a href="#einblicke">Einblicke</a>
+          <a href="#funktionen">Funktionen</a>
+          <a href="#app-installieren">Desktop-App</a>
+          <a href="#datenschutz">Datenschutz</a>
+        </nav>
+
+        <div class="header-actions">
+          <div class="scheme-swatches" role="radiogroup" aria-label="Farbschema wählen">
+            <button
+              type="button"
+              class="swatch-btn is-active"
+              data-scheme-pick="focus-cream"
+              role="radio"
+              aria-checked="true"
+              aria-label="Focus Cream"
+              title="Focus Cream"
+              style="--sw-bg: #F6F1E7; --sw-primary: #0E4D48; --sw-warm: #D96B27;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+            </button>
+            <button
+              type="button"
+              class="swatch-btn"
+              data-scheme-pick="midnight-teal"
+              role="radio"
+              aria-checked="false"
+              aria-label="Midnight Teal"
+              title="Midnight Teal"
+              style="--sw-bg: #0E1817; --sw-primary: #3AB2A5; --sw-warm: #E98344;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+            </button>
+            <button
+              type="button"
+              class="swatch-btn"
+              data-scheme-pick="terracotta-paper"
+              role="radio"
+              aria-checked="false"
+              aria-label="Terracotta Paper"
+              title="Terracotta Paper"
+              style="--sw-bg: #F8F1E8; --sw-primary: #B84A27; --sw-warm: #135852;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+            </button>
+            <button
+              type="button"
+              class="swatch-btn"
+              data-scheme-pick="botanical-sage"
+              role="radio"
+              aria-checked="false"
+              aria-label="Botanical Sage"
+              title="Botanical Sage"
+              style="--sw-bg: #F1F2EA; --sw-primary: #234B3E; --sw-warm: #D1792E;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+            </button>
+            <button
+              type="button"
+              class="swatch-btn"
+              data-scheme-pick="espresso-ember"
+              role="radio"
+              aria-checked="false"
+              aria-label="Espresso Ember"
+              title="Espresso Ember"
+              style="--sw-bg: #161210; --sw-primary: #E07B3C; --sw-warm: #4AA89B;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <span class="header-divider" aria-hidden="true"></span>
+
+          <a
+            href="https://github.com/simoneggert16-png/openstudy"
+            class="header-github"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            GitHub
+          </a>
+
+          <a
+            href="./app/?scheme=focus-cream"
+            class="btn btn-accent header-open-btn js-app-link"
+          >
+            OpenStudy öffnen
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="container">
+          <div class="hero-copy">
+            <div class="hero-kicker">
+              <span class="kicker-dot" aria-hidden="true"></span>
+              <span>Freie Open-Source-Lernplattform</span>
+            </div>
+
+            <h1 class="font-display">
+              Ruhig lernen — mit eigenem Sprachtutor, Notizen und Fokus-Planer.
+            </h1>
+
+            <p class="hero-lead">
+              OpenStudy vereint den Hermes Bildschirm-Lehrer, mündliches Sprachtraining,
+              strukturierte Lernnotizen, lokalen Obsidian-Abgleich und Fokus-Blöcke in einer
+              klaren Oberfläche. Sofort im Browser startbar oder mit einem Klick als eigene
+              Desktop-App eingerichtet.
+            </p>
+
+            <div class="hero-cta-row">
+              <a
+                href="./app/?scheme=focus-cream"
+                class="btn btn-accent btn-lg js-app-link"
+                id="hero-open-btn"
+              >
+                <span>OpenStudy öffnen</span>
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M7 17 17 7" />
+                  <path d="M8 7h9v9" />
+                </svg>
+              </a>
+
+              <a
+                href="#app-installieren"
+                class="btn btn-secondary btn-lg"
+                id="install-cta-btn"
+              >
+                <span>Als Desktop-App installieren</span>
+              </a>
+            </div>
+
+            <p class="hero-footnote">
+              Ohne Benutzerkonto · Kostenlos mit Google Free Tier oder offline mit Ollama · MIT Open Source
+            </p>
+          </div>
+
+          <div class="hero-stage">
+            <div class="stage-bar">
+              <span class="stage-dots" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </span>
+              <span class="font-mono-num">OpenStudy · Lernstudio</span>
+              <span>Dashboard &amp; Tagesplan</span>
+            </div>
+            <button
+              type="button"
+              class="stage-trigger js-lightbox-open"
+              data-title="Dashboard &amp; Tagesplan"
+              aria-label="Dashboard-Vorschau in voller Grösse ansehen"
+            >
+              <div class="stage-frame">
+                <img
+                  src="./docs/previews/01-dashboard.png"
+                  data-preview-file="01-dashboard.png"
+                  alt="OpenStudy Dashboard mit Kursübersicht, anstehenden Prüfungen und Tagesplan"
+                  loading="eager"
+                />
+              </div>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="palette-band" aria-label="Farbwelten live testen">
+        <div class="container palette-inner">
+          <div class="palette-meta">
+            <div class="palette-eyebrow">
+              <span>Fünf kuratierte Farbwelten</span>
+              <span>·</span>
+              <span>Wird direkt an die App übergeben</span>
+            </div>
+            <p class="palette-active-title font-display" id="active-scheme-name">Focus Cream</p>
+            <p class="palette-active-tagline" id="active-scheme-tagline">
+              Warmes Papier, tiefes Petrol und ein Hauch Orange
+            </p>
+          </div>
+
+          <div class="palette-options" role="radiogroup" aria-label="Farbwelt wählen">
+            <button
+              type="button"
+              class="palette-option is-active"
+              data-scheme-pick="focus-cream"
+              role="radio"
+              aria-checked="true"
+              style="--sw-bg: #F6F1E7; --sw-primary: #0E4D48; --sw-warm: #D96B27;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+              <span>Focus Cream</span>
+            </button>
+            <button
+              type="button"
+              class="palette-option"
+              data-scheme-pick="midnight-teal"
+              role="radio"
+              aria-checked="false"
+              style="--sw-bg: #0E1817; --sw-primary: #3AB2A5; --sw-warm: #E98344;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+              <span>Midnight Teal</span>
+            </button>
+            <button
+              type="button"
+              class="palette-option"
+              data-scheme-pick="terracotta-paper"
+              role="radio"
+              aria-checked="false"
+              style="--sw-bg: #F8F1E8; --sw-primary: #B84A27; --sw-warm: #135852;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+              <span>Terracotta Paper</span>
+            </button>
+            <button
+              type="button"
+              class="palette-option"
+              data-scheme-pick="botanical-sage"
+              role="radio"
+              aria-checked="false"
+              style="--sw-bg: #F1F2EA; --sw-primary: #234B3E; --sw-warm: #D1792E;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+              <span>Botanical Sage</span>
+            </button>
+            <button
+              type="button"
+              class="palette-option"
+              data-scheme-pick="espresso-ember"
+              role="radio"
+              aria-checked="false"
+              style="--sw-bg: #161210; --sw-primary: #E07B3C; --sw-warm: #4AA89B;"
+            >
+              <span class="swatch-disc" aria-hidden="true"></span>
+              <span>Espresso Ember</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="einblicke" class="section">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-label">Einblicke</span>
+            <h2 class="font-display">Gestaltet für lange Lerneinheiten ohne Unruhe.</h2>
+            <p>
+              Jede Ansicht konzentriert sich auf eine Aufgabe. Klicke auf ein Bild, um die
+              Oberfläche in voller Grösse zu betrachten.
+            </p>
+          </div>
+
+          <div class="gallery-grid">
+            <article class="gallery-item">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-title="Dashboard &amp; Tagesplan"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="./docs/previews/01-dashboard.png"
+                    data-preview-file="01-dashboard.png"
+                    alt="Screenshot des OpenStudy Dashboards mit Kursen und Tagesplan"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono-num">docs/previews/01-dashboard.png</span>
+                    <span>Vorschau nicht gefunden</span>
+                  </div>
+                </div>
+                <div class="gallery-caption">
+                  <div class="gallery-caption-top">
+                    <h3>Dashboard &amp; Tagesplan</h3>
+                    <span class="gallery-index font-mono-num">01</span>
+                  </div>
+                  <p>
+                    Kurse, anstehende Prüfungen, Lernfortschritt und dein täglicher Fokus-Plan
+                    übersichtlich auf einer ruhigen Seite.
+                  </p>
+                </div>
+              </button>
+            </article>
+
+            <article class="gallery-item">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-title="Echtzeit-Voice-Tutor"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="./docs/previews/02-voice-tutor.png"
+                    data-preview-file="02-voice-tutor.png"
+                    alt="Screenshot des OpenStudy Voice Tutors mit Stimmenwahl und Sprach-Sperre"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono-num">docs/previews/02-voice-tutor.png</span>
+                    <span>Vorschau nicht gefunden</span>
+                  </div>
+                </div>
+                <div class="gallery-caption">
+                  <div class="gallery-caption-top">
+                    <h3>Echtzeit-Voice-Tutor</h3>
+                    <span class="gallery-index font-mono-num">02</span>
+                  </div>
+                  <p>
+                    Sechs Stimmen mit Hörprobe vor dem Start, ruhiges Sprechtempo, Sprach-Sperre
+                    für Fremdsprachen und Tiefenmodus bei Rückfragen.
+                  </p>
+                </div>
+              </button>
+            </article>
+
+            <article class="gallery-item">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-title="Integrierte Notizen &amp; Obsidian"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="./docs/previews/03-notion-notes.png"
+                    data-preview-file="03-notion-notes.png"
+                    alt="Screenshot des Block-Editors für Lernnotizen und Obsidian-Anbindung"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono-num">docs/previews/03-notion-notes.png</span>
+                    <span>Vorschau nicht gefunden</span>
+                  </div>
+                </div>
+                <div class="gallery-caption">
+                  <div class="gallery-caption-top">
+                    <h3>Notizen &amp; Obsidian-Kontext</h3>
+                    <span class="gallery-index font-mono-num">03</span>
+                  </div>
+                  <p>
+                    Eigener Block-Editor mit Überschriften, Merksätzen und Checklisten sowie
+                    direktes Einlesen lokaler Obsidian-Markdown-Ordner.
+                  </p>
+                </div>
+              </button>
+            </article>
+
+            <article class="gallery-item">
+              <button
+                type="button"
+                class="gallery-trigger js-lightbox-open"
+                data-title="Fokus-Timer &amp; Sprach-Labor"
+              >
+                <div class="gallery-media">
+                  <img
+                    src="./docs/previews/04-focus-languages.png"
+                    data-preview-file="04-focus-languages.png"
+                    alt="Screenshot von Fokus-Timer, Lernprotokoll und Sprach-Übungen"
+                    loading="lazy"
+                  />
+                  <div class="gallery-fallback">
+                    <span class="font-mono-num">docs/previews/04-focus-languages.png</span>
+                    <span>Vorschau nicht gefunden</span>
+                  </div>
+                </div>
+                <div class="gallery-caption">
+                  <div class="gallery-caption-top">
+                    <h3>Fokus-Timer &amp; Sprach-Labor</h3>
+                    <span class="gallery-index font-mono-num">04</span>
+                  </div>
+                  <p>
+                    Pomodoro-Einheiten mit Lernprotokoll, Karteikarten nach Spaced-Repetition und
+                    gezielte Übungen für aktive Sprachsicherheit.
+                  </p>
+                </div>
+              </button>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="funktionen" class="section">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-label">Funktionen</span>
+            <h2 class="font-display">Fünf Werkzeuge, die ruhig ineinandergreifen.</h2>
+            <p>
+              Statt zwischen fünf offenen Tabs zu wechseln, bleiben Bildschirm-Hilfe, Sprache,
+              Notizen und Zeitplanung an einem Ort — ohne monatliches Abo.
+            </p>
+          </div>
+
+          <div class="feature-grid">
+            <article class="feature-col feature-col-wide">
+              <div class="feature-col-wide-body">
+                <span class="feature-num font-mono-num">01</span>
+                <h3>Hermes Bildschirm-Lehrer &amp; Schwebendes Lehrer-Fenster</h3>
+                <p>
+                  Erklärt dir Aufgaben live über andere Programme wie Excel, Word, OneNote oder
+                  Code hinweg. Hermes liest den geteilten Bildschirmausschnitt, setzt visuelle
+                  Marker auf relevante Stellen und baut mit der Zeit ein eigenes Lerngedächtnis auf.
+                </p>
+              </div>
+              <div class="feature-col-wide-list">
+                <ul class="feature-points">
+                  <li>
+                    Schwebendes Lehrer-Fenster bleibt über Excel, Word, OneNote oder deinem Editor
+                    im Vordergrund
+                  </li>
+                  <li>
+                    Setzt nummerierte visuelle Marker direkt auf Formeln, Textstellen oder
+                    Schaltflächen
+                  </li>
+                  <li>
+                    Arbeitet mit eigenen <span class="font-mono-num">SKILL.md</span>-Fähigkeiten,
+                    dauerhaftem Lerngedächtnis und optionalem Nous Research Hermes Gateway
+                  </li>
+                </ul>
+              </div>
+            </article>
+
+            <article class="feature-col">
+              <span class="feature-num font-mono-num">02</span>
+              <h3>Mündlicher Voice-Tutor</h3>
+              <p>
+                Übe Prüfungsgespräche oder lasse dir schwierige Kapitel laut erklären — in deinem
+                Tempo und ohne Unterbrechung.
+              </p>
+              <ul class="feature-points">
+                <li>Hörprobe für sechs natürliche Stimmen vor Gesprächsbeginn</li>
+                <li>Sprechtempo wählbar zwischen Langsam, Ruhig und Normal</li>
+                <li>Sprach-Sperre für Deutsch, Englisch, Französisch, Spanisch und Italienisch</li>
+              </ul>
+            </article>
+
+            <article class="feature-col">
+              <span class="feature-num font-mono-num">03</span>
+              <h3>Notizen-Studio &amp; Obsidian</h3>
+              <p>
+                Schreibe Lernzusammenfassungen direkt im eingebauten Block-Editor oder verbinde
+                deinen bestehenden Obsidian-Ordner auf dem Computer.
+              </p>
+              <ul class="feature-points">
+                <li>Überschriften, Merksatz-Blöcke, Code-Abschnitte und Aufgabenlisten</li>
+                <li>Lokale Markdown-Notizen und Wikilinks direkt als Kontext für den Tutor</li>
+                <li>Import für Stundenpläne (.ics), Stoffpläne und Notion-Markdown-Exporte</li>
+              </ul>
+            </article>
+
+            <article class="feature-col">
+              <span class="feature-num font-mono-num">04</span>
+              <h3>Freie Wahl des KI-Anbieters</h3>
+              <p>
+                Du bestimmst, welches Modell antwortet — kostenlos über Google AI Studio, lokal mit
+                Ollama, über das Hermes Agent Gateway oder mit eigenen API-Schlüsseln.
+              </p>
+              <ul class="feature-points">
+                <li>Integrierter Free-Only-Schalter schützt vor ungewollten API-Kosten</li>
+                <li>Vollständig offline nutzbar über lokales Ollama (z. B. Gemma 3)</li>
+                <li>Optional koppelbar mit Nous Research Hermes sowie Antigravity, Claude Code und Codex</li>
+              </ul>
+            </article>
+
+            <article class="feature-col">
+              <span class="feature-num font-mono-num">05</span>
+              <h3>Fokus-Planer &amp; Wiederholung</h3>
+              <p>
+                Plane realistische Lerneinheiten statt endloser Listen. Der integrierte Coach fragt
+                zuerst nach deinem Verständnis, bevor er Lösungen ausgibt.
+              </p>
+              <ul class="feature-points">
+                <li>Pomodoro-Timer mit ruhigem Tagesprotokoll ohne Ablenkung</li>
+                <li>Karteikarten-Trainer mit abgestufter Wiederholung</li>
+                <li>Notizen, Karteikarten und Timer funktionieren auch komplett ohne KI</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="app-installieren" class="section">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-label">Desktop-App ohne Umwege</span>
+            <h2 class="font-display">
+              In 10 Sekunden als Desktop-App — ganz ohne Download-Warnung.
+            </h2>
+            <p>
+              OpenStudy wird direkt aus dem Browser als reguläre App installiert. Das funktioniert
+              auf Windows, macOS, Linux, iPad und Smartphone — ohne Installationsdatei, ohne
+              Administratorrechte und ohne Sicherheitswarnung.
+            </p>
+          </div>
+
+          <div class="install-steps">
+            <article class="install-step">
+              <span class="step-index font-mono-num">01</span>
+              <h3>OpenStudy öffnen</h3>
+              <p>
+                Öffne OpenStudy direkt im Browser. Das Lernstudio läuft sofort, kostenlos und ohne
+                Benutzerkonto lokal auf deinem Gerät.
+              </p>
+            </article>
+
+            <article class="install-step">
+              <span class="step-index font-mono-num">02</span>
+              <h3>Ein Klick auf «App installieren»</h3>
+              <p>
+                Klicke in Chrome oder Edge auf das kleine Install-Symbol rechts in der Adressleiste
+                (in Safari: Teilen → Zum Home-Bildschirm oder Zum Dock). OpenStudy öffnet sich
+                danach als eigene Desktop-App mit Icon — ohne Installationsdatei und ohne
+                Browser-Warnung.
+              </p>
+            </article>
+
+            <article class="install-step">
+              <span class="step-index font-mono-num">03</span>
+              <h3>Obsidian &amp; eigene Dateien direkt verbinden</h3>
+              <p>
+                Chrome und Edge können deinen lokalen Obsidian-Ordner direkt aus der App heraus
+                verbinden, ganz ohne zusätzliche Programme. Ohne Obsidian steht dir der eingebaute
+                Block-Editor sofort bereit.
+              </p>
+            </article>
+          </div>
+
+          <div class="install-action-bar">
+            <div class="install-action-buttons">
+              <a
+                href="./app/?scheme=focus-cream"
+                class="btn btn-accent btn-lg js-app-link"
+              >
+                <span>OpenStudy öffnen</span>
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M7 17 17 7" />
+                  <path d="M8 7h9v9" />
+                </svg>
+              </a>
+
+              <button
+                type="button"
+                class="btn btn-secondary btn-lg"
+                id="section-pwa-install-btn"
+              >
+                Als App installieren
+              </button>
+            </div>
+
+            <div>
+              <p class="install-browser-note">
+                Empfohlen für direkte Obsidian-Ordnerverbindung: Chrome, Edge oder Brave. Auch
+                kompatibel mit Safari und Firefox.
+              </p>
+              <p
+                class="install-status-feedback"
+                id="install-status-feedback"
+                role="status"
+                aria-live="polite"
+                hidden
+              ></p>
+            </div>
+          </div>
+
+          <details class="dev-details">
+            <summary>
+              <span>Für Entwicklerinnen und Entwickler: Quellcode lokal ausführen</span>
+              <span class="dev-summary-hint font-mono-num">git clone · npm run dev</span>
+            </summary>
+            <div class="dev-body">
+              <p>
+                Wer OpenStudy aus dem Quellcode starten oder lokale CLI-Agents (Antigravity, Claude
+                Code, Codex CLI) über die optionale Localhost-Bridge einbinden möchte, benötigt
+                lediglich Node.js.
+              </p>
+              <pre class="dev-commands font-mono-num"><code>git clone https://github.com/simoneggert16-png/openstudy.git
+cd openstudy
+npm install
+npm run dev
+
+# Optional: Lokale Companion-Bridge (läuft ausschliesslich auf 127.0.0.1:4319)
+npm run bridge</code></pre>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section id="datenschutz" class="section">
+        <div class="container">
+          <div class="section-header">
+            <span class="section-label">Privatsphäre &amp; Offenheit</span>
+            <h2 class="font-display">Deine Lerndaten gehören dir, nicht einer Cloud.</h2>
+            <p>
+              OpenStudy benötigt weder Registrierung noch Analyse-Skripte. Notizen, Lernpläne und
+              API-Schlüssel verbleiben ausschliesslich auf deinem Gerät. Nur wenn du aktiv eine
+              KI-Antwort abrufst, geht der nötige Ausschnitt direkt an deinen gewählten Anbieter
+              oder dein lokales Ollama-Modell.
+            </p>
+          </div>
+
+          <div class="privacy-grid">
+            <div class="privacy-col">
+              <h3>Lokale Speicherung im Browser</h3>
+              <p>
+                Kurse, Karteikarten, Fokus-Protokolle und Schlüssel bleiben im lokalen Speicher
+                deines Geräts. Du kannst deinen gesamten Stand jederzeit exportieren oder
+                zurücksetzen.
+              </p>
+            </div>
+
+            <div class="privacy-col">
+              <h3>Eingebauter Kosten-Schutz</h3>
+              <p>
+                Der Free-Only-Schalter begrenzt die Modellwahl standardmässig auf kostenlose Stufen
+                und lokale Modelle, damit keine unerwarteten Gebühren entstehen.
+              </p>
+            </div>
+
+            <div class="privacy-col">
+              <h3>Bereinigte JSON-Backups</h3>
+              <p>
+                Beim Export deiner Lerndaten entfernt OpenStudy gespeicherte API-Schlüssel
+                automatisch, damit du Sicherungen bedenkenlos ablegen oder teilen kannst.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <div class="footer-brand">
+          <span class="footer-wordmark font-display">OpenStudy</span>
+          <span>Freie Open-Source-Lernplattform unter MIT-Lizenz</span>
+        </div>
+
+        <div class="footer-links">
+          <a href="#einblicke">Einblicke</a>
+          <a href="#funktionen">Funktionen</a>
+          <a href="#app-installieren">Desktop-App</a>
+          <a href="#datenschutz">Datenschutz</a>
+          <a href="./app/?scheme=focus-cream" class="js-app-link">App öffnen</a>
+          <a
+            href="https://github.com/simoneggert16-png/openstudy"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            GitHub
+          </a>
+          <a
+            href="https://github.com/simoneggert16-png/openstudy/blob/main/LICENSE"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            MIT-Lizenz
+          </a>
+        </div>
+      </div>
+    </footer>
+
+    <div
+      class="lightbox"
+      id="preview-lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lightbox-title"
+    >
+      <div class="lightbox-dialog">
+        <div class="lightbox-bar">
+          <span id="lightbox-title" class="lightbox-title">Vorschau</span>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            id="lightbox-close"
+            aria-label="Vorschau schliessen"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" x2="6" y1="6" y2="18" />
+              <line x1="6" x2="18" y1="6" y2="18" />
+            </svg>
+            <span>Schliessen</span>
+          </button>
+        </div>
+        <div class="lightbox-img-wrap">
+          <img id="lightbox-img" src="" alt="" />
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="install-modal"
+      id="install-guide-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="install-guide-title"
+      aria-hidden="true"
+    >
+      <div class="install-modal-dialog">
+        <div class="install-modal-header">
+          <h3 id="install-guide-title" class="font-display">Als App installieren</h3>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            id="install-guide-close"
+            aria-label="Installationshinweis schliessen"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" x2="6" y1="6" y2="18" />
+              <line x1="6" x2="18" y1="6" y2="18" />
+            </svg>
+            <span>Schliessen</span>
+          </button>
+        </div>
+        <div class="install-modal-body">
+          <p class="install-modal-browser" id="install-guide-browser">Chrome / Edge</p>
+          <p class="install-modal-text" id="install-guide-text">
+            Klicke rechts oben in der Adressleiste auf das Install-Symbol — oder im Browser-Menü
+            (⋮) auf «Streamen, speichern und teilen → Seite als App installieren».
+          </p>
+          <p class="install-modal-hint" id="install-guide-hint">
+            OpenStudy öffnet sich danach als eigenes Desktop-Fenster mit Icon. Du kannst die App
+            auch sofort direkt im Browser starten.
+          </p>
+        </div>
+        <div class="install-modal-footer">
+          <a
+            href="./app/?scheme=focus-cream"
+            class="btn btn-accent js-app-link"
+            id="install-guide-open-app"
+          >
+            <span>OpenStudy App öffnen</span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M7 17 17 7" />
+              <path d="M8 7h9v9" />
+            </svg>
+          </a>
+          <button type="button" class="btn btn-ghost" id="install-guide-dismiss">
+            Schliessen
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var SCHEMES = {
+          'focus-cream': {
+            id: 'focus-cream',
+            name: 'Focus Cream',
+            tagline: 'Warmes Papier, tiefes Petrol und ein Hauch Orange',
+            isDark: false,
+            themeColor: '#0E4D48',
+          },
+          'midnight-teal': {
+            id: 'midnight-teal',
+            name: 'Midnight Teal',
+            tagline: 'Ruhiges Nachtpetrol mit warmem Bernstein-Akzent',
+            isDark: true,
+            themeColor: '#0E1817',
+          },
+          'terracotta-paper': {
+            id: 'terracotta-paper',
+            name: 'Terracotta Paper',
+            tagline: 'Leinenpapier, warmes Terrakotta und tiefes Waldgrün',
+            isDark: false,
+            themeColor: '#B84A27',
+          },
+          'botanical-sage': {
+            id: 'botanical-sage',
+            name: 'Botanical Sage',
+            tagline: 'Sanftes Haferpapier, Salbeigrün und warmes Ocker',
+            isDark: false,
+            themeColor: '#234B3E',
+          },
+          'espresso-ember': {
+            id: 'espresso-ember',
+            name: 'Espresso Ember',
+            tagline: 'Dunkle Röstung, warmes Kupfer und ruhiges Petrol',
+            isDark: true,
+            themeColor: '#161210',
+          },
+        };
+
+        var isLocalWebsiteDir =
+          window.location.protocol === 'file:' ||
+          window.location.pathname.indexOf('/website/') !== -1;
+
+        var appBase = isLocalWebsiteDir ? './app/' : './app/';
+        var activeScheme =
+          document.documentElement.getAttribute('data-scheme') || 'focus-cream';
+        if (!Object.prototype.hasOwnProperty.call(SCHEMES, activeScheme)) {
+          activeScheme = 'focus-cream';
+        }
+
+        function updateAppLinks() {
+          var target =
+            appBase + '?scheme=' + encodeURIComponent(activeScheme);
+          document.querySelectorAll('.js-app-link').forEach(function (el) {
+            el.setAttribute('href', target);
+          });
+        }
+
+        function applyScheme(id, persist) {
+          var def = SCHEMES[id] || SCHEMES['focus-cream'];
+          activeScheme = def.id;
+          document.documentElement.setAttribute('data-scheme', def.id);
+          document.documentElement.setAttribute(
+            'data-theme',
+            def.isDark ? 'dark' : 'light'
+          );
+
+          var metaTheme = document.querySelector('meta[name="theme-color"]');
+          if (metaTheme) metaTheme.setAttribute('content', def.themeColor);
+
+          var nameEl = document.getElementById('active-scheme-name');
+          var tagEl = document.getElementById('active-scheme-tagline');
+          if (nameEl) nameEl.textContent = def.name;
+          if (tagEl) tagEl.textContent = def.tagline;
+
+          document
+            .querySelectorAll('[data-scheme-pick]')
+            .forEach(function (btn) {
+              var match = btn.getAttribute('data-scheme-pick') === def.id;
+              btn.classList.toggle('is-active', match);
+              btn.setAttribute('aria-checked', match ? 'true' : 'false');
+            });
+
+          updateAppLinks();
+
+          if (persist) {
+            try {
+              window.localStorage.setItem('openstudy-website-scheme', def.id);
+            } catch (e) {}
+          }
+        }
+
+        document.querySelectorAll('[data-scheme-pick]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var id = btn.getAttribute('data-scheme-pick');
+            if (id) applyScheme(id, true);
+          });
+        });
+
+        applyScheme(activeScheme, false);
+
+        // Detect deployed ./app/ vs local ./app/ seamlessly
+        if (
+          window.location.protocol === 'http:' ||
+          window.location.protocol === 'https:'
+        ) {
+          fetch('./app/index.html', { method: 'HEAD' })
+            .then(function (res) {
+              if (res.ok) {
+                appBase = './app/';
+                updateAppLinks();
+              } else {
+                appBase = './app/';
+                updateAppLinks();
+              }
+            })
+            .catch(function () {
+              if (isLocalWebsiteDir) {
+                appBase = './app/';
+                updateAppLinks();
+              }
+            });
+        }
+
+        // Resolve preview screenshots for both GitHub Pages root (./docs/previews/)
+        // and local website/ directory (./docs/previews/)
+        var primaryPrefix = isLocalWebsiteDir
+          ? './docs/previews/'
+          : './docs/previews/';
+        var fallbackPrefix = isLocalWebsiteDir
+          ? './docs/previews/'
+          : './docs/previews/';
+
+        function handlePreviewError(img) {
+          var file = img.getAttribute('data-preview-file');
+          if (!file) return;
+          if (!img.dataset.fallbackTried) {
+            img.dataset.fallbackTried = '1';
+            img.setAttribute('src', fallbackPrefix + file);
+            return;
+          }
+          var media = img.closest('.gallery-media');
+          if (media) media.classList.add('is-missing');
+        }
+
+        document.querySelectorAll('img[data-preview-file]').forEach(function (img) {
+          var file = img.getAttribute('data-preview-file');
+          img.addEventListener('error', function () {
+            handlePreviewError(img);
+          });
+          if (isLocalWebsiteDir && file) {
+            img.setAttribute('src', primaryPrefix + file);
+          } else if (img.complete && img.naturalWidth === 0) {
+            handlePreviewError(img);
+          }
+        });
+
+        // Register root service worker so Chrome/Edge detects an installable PWA
+        if (
+          'serviceWorker' in navigator &&
+          (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+        ) {
+          window.addEventListener('load', function () {
+            navigator.serviceWorker.register('./sw.js').catch(function () {});
+          });
+        }
+
+        // Always-responsive PWA install flow (native prompt when ready, tailored modal fallback)
+        var deferredInstallPrompt = null;
+        var isInstalledApp =
+          window.matchMedia('(display-mode: standalone)').matches ||
+          Boolean(window.navigator.standalone);
+        var heroInstallBtn = document.getElementById('install-cta-btn');
+        var sectionInstallBtn = document.getElementById('section-pwa-install-btn');
+        var installStatusEl = document.getElementById('install-status-feedback');
+
+        var installModal = document.getElementById('install-guide-modal');
+        var installModalBrowser = document.getElementById('install-guide-browser');
+        var installModalText = document.getElementById('install-guide-text');
+        var installModalHint = document.getElementById('install-guide-hint');
+        var installModalClose = document.getElementById('install-guide-close');
+        var installModalDismiss = document.getElementById('install-guide-dismiss');
+        var lastInstallTrigger = null;
+
+        function showInstallStatus(message) {
+          if (!installStatusEl) return;
+          installStatusEl.textContent = message;
+          installStatusEl.hidden = false;
+        }
+
+        function detectInstallGuide() {
+          if (isInstalledApp) {
+            return {
+              browser: 'Bereits eingerichtet',
+              text: 'OpenStudy ist auf diesem Gerät bereits als App eingerichtet. Du kannst sie direkt über das Startmenü, das Dock oder den Button unten öffnen.',
+              hint: 'Alle Lerndaten, Notizen und Einstellungen werden automatisch lokal synchron gehalten.',
+            };
+          }
+          var ua = window.navigator.userAgent || '';
+          var isSafari =
+            /safari/i.test(ua) && !/chrome|chromium|crios|edg|opr|brave|fxios/i.test(ua);
+          var isFirefox = /firefox|fxios/i.test(ua);
+
+          if (isSafari) {
+            return {
+              browser: 'Safari',
+              text: 'Tippe oder klicke auf «Teilen» und wähle «Zum Dock hinzufügen» (macOS) oder «Zum Home-Bildschirm hinzufügen» (iPad / iPhone).',
+              hint: 'Danach startet OpenStudy als eigene App ohne Browser-Leisten — oder du öffnest die Web-App direkt unten.',
+            };
+          }
+          if (isFirefox) {
+            return {
+              browser: 'Firefox',
+              text: 'Firefox unterstützt auf dem Desktop noch keine direkte Web-App-Installation. Starte OpenStudy einfach direkt im Browser oder öffne die Seite kurz in Chrome oder Edge, um ein eigenes Desktop-Fenster anzulegen.',
+              hint: 'Für die direkte Ordnerverbindung mit lokalem Obsidian empfehlen wir Chrome, Edge oder Brave.',
+            };
+          }
+          return {
+            browser: 'Chrome / Edge',
+            text: 'Klicke rechts oben in der Adressleiste auf das Install-Symbol — oder im Browser-Menü (⋮) auf «Streamen, speichern und teilen → Seite als App installieren».',
+            hint: 'Falls OpenStudy bereits installiert ist, findest du die App direkt im Startmenü oder Dock. Alternativ kannst du sofort im Browser starten.',
+          };
+        }
+
+        function openInstallModal(triggerEl) {
+          if (!installModal) return;
+          var guide = detectInstallGuide();
+          if (installModalBrowser) installModalBrowser.textContent = guide.browser;
+          if (installModalText) installModalText.textContent = guide.text;
+          if (installModalHint) installModalHint.textContent = guide.hint;
+          lastInstallTrigger = triggerEl || null;
+          installModal.classList.add('is-open');
+          installModal.setAttribute('aria-hidden', 'false');
+          document.body.style.overflow = 'hidden';
+          if (installModalClose) installModalClose.focus();
+        }
+
+        function closeInstallModal() {
+          if (!installModal) return;
+          installModal.classList.remove('is-open');
+          installModal.setAttribute('aria-hidden', 'true');
+          document.body.style.overflow = '';
+          if (lastInstallTrigger && typeof lastInstallTrigger.focus === 'function') {
+            lastInstallTrigger.focus();
+          }
+        }
+
+        window.addEventListener('beforeinstallprompt', function (event) {
+          event.preventDefault();
+          deferredInstallPrompt = event;
+          if (sectionInstallBtn) {
+            sectionInstallBtn.textContent = 'Jetzt direkt installieren';
+          }
+        });
+
+        window.addEventListener('appinstalled', function () {
+          isInstalledApp = true;
+          deferredInstallPrompt = null;
+          if (sectionInstallBtn) {
+            sectionInstallBtn.textContent = 'Als App installiert';
+          }
+          showInstallStatus('OpenStudy wurde erfolgreich als Desktop-App eingerichtet.');
+        });
+
+        function handleInstallClick(event, triggerEl) {
+          event.preventDefault();
+          if (deferredInstallPrompt) {
+            var promptEvent = deferredInstallPrompt;
+            deferredInstallPrompt = null;
+            promptEvent.prompt();
+            if (promptEvent.userChoice && promptEvent.userChoice.then) {
+              promptEvent.userChoice
+                .then(function (choice) {
+                  if (choice && choice.outcome === 'accepted') {
+                    isInstalledApp = true;
+                    if (sectionInstallBtn) {
+                      sectionInstallBtn.textContent = 'Als App installiert';
+                    }
+                    showInstallStatus('OpenStudy wurde erfolgreich als Desktop-App eingerichtet.');
+                  } else {
+                    if (sectionInstallBtn) {
+                      sectionInstallBtn.textContent = 'Als App installieren';
+                    }
+                  }
+                })
+                .catch(function () {});
+            }
+            return;
+          }
+          openInstallModal(triggerEl);
+        }
+
+        if (heroInstallBtn) {
+          heroInstallBtn.addEventListener('click', function (event) {
+            handleInstallClick(event, heroInstallBtn);
+          });
+        }
+
+        if (sectionInstallBtn) {
+          sectionInstallBtn.addEventListener('click', function (event) {
+            handleInstallClick(event, sectionInstallBtn);
+          });
+        }
+
+        if (installModalClose) {
+          installModalClose.addEventListener('click', closeInstallModal);
+        }
+
+        if (installModalDismiss) {
+          installModalDismiss.addEventListener('click', closeInstallModal);
+        }
+
+        if (installModal) {
+          installModal.addEventListener('click', function (event) {
+            if (event.target === installModal) closeInstallModal();
+          });
+        }
+
+        // Lightbox preview modal
+        var lightbox = document.getElementById('preview-lightbox');
+        var lightboxImg = document.getElementById('lightbox-img');
+        var lightboxTitle = document.getElementById('lightbox-title');
+        var lightboxClose = document.getElementById('lightbox-close');
+        var lastTrigger = null;
+
+        function closeLightbox() {
+          if (!lightbox) return;
+          lightbox.classList.remove('is-open');
+          document.body.style.overflow = '';
+          if (lastTrigger && typeof lastTrigger.focus === 'function') {
+            lastTrigger.focus();
+          }
+        }
+
+        document.querySelectorAll('.js-lightbox-open').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            var media = btn.querySelector('.gallery-media');
+            if (media && media.classList.contains('is-missing')) return;
+            var img = btn.querySelector('img');
+            if (!img) return;
+            var src = img.currentSrc || img.getAttribute('src');
+            var title = btn.getAttribute('data-title') || 'Vorschau';
+            if (!src || !lightbox || !lightboxImg) return;
+            lastTrigger = btn;
+            lightboxImg.src = src;
+            lightboxImg.alt = img.getAttribute('alt') || title;
+            if (lightboxTitle) lightboxTitle.textContent = title;
+            lightbox.classList.add('is-open');
+            document.body.style.overflow = 'hidden';
+            if (lightboxClose) lightboxClose.focus();
+          });
+        });
+
+        if (lightboxClose) {
+          lightboxClose.addEventListener('click', closeLightbox);
+        }
+
+        if (lightbox) {
+          lightbox.addEventListener('click', function (event) {
+            if (event.target === lightbox) closeLightbox();
+          });
+        }
+
+        document.addEventListener('keydown', function (event) {
+          if (event.key !== 'Escape') return;
+          if (installModal && installModal.classList.contains('is-open')) {
+            closeInstallModal();
+            return;
+          }
+          if (lightbox && lightbox.classList.contains('is-open')) {
+            closeLightbox();
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
