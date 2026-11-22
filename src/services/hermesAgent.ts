@@ -303,7 +303,7 @@ export const HERMES_LIVE_FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'add_school_schedule',
     description:
-      'Trägt erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 30 Tage (z. B. aus einem geöffneten Schulportal oder Stundenplan) direkt in den OpenStudy-Prüfungskalender ein.',
+      'Trägt erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 3 Monate (90 Tage, z. B. aus einem geöffneten Schulportal oder Stundenplan) direkt in den OpenStudy-Prüfungskalender ein.',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -590,7 +590,7 @@ export function buildHermesTeacherSystemPrompt(params: {
     '',
     'WERKZEUG-PRINZIPIEN:',
     '- Erstelle Lernnotizen (create_study_note), Karteikarten (create_flashcards) oder Tagesplan-Aufgaben (add_daily_plan_tasks), sobald sie dem Lernfortschritt konkret helfen oder gewünscht werden.',
-    '- Trage erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 30 Tage (z. B. aus einem geöffneten Schulportal oder Stundenplan) mit add_school_schedule direkt in den OpenStudy-Prüfungskalender ein.',
+    '- Trage erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 3 Monate (90 Tage, z. B. aus einem geöffneten Schulportal oder Stundenplan) mit add_school_schedule direkt in den OpenStudy-Prüfungskalender ein.',
     '- Nutze save_learning_memory für wichtige dauerhafte Beobachtungen über Lernstil, Stärken, Schwächen oder Ziele.',
     '- Nutze save_custom_skill nur dann, wenn du ein wiederverwendbares Lehrverfahren (SKILL.md) für wiederkehrende Aufgaben festhalten oder verbessern kannst.',
   ].join('\n');

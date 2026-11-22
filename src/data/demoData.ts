@@ -300,7 +300,7 @@ export function createDemoState(): OpenStudyState {
       schoolPortalUrl: '',
       obsidianVaultPath: '',
       autoSyncEnabled: false,
-      autoSyncIntervalMinutes: 60,
+      autoSyncIntervalMinutes: 2880,
       lastAutoSyncAt: '',
     },
     voice: {

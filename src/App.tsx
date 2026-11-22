@@ -189,11 +189,11 @@ export default function App() {
     const trimmedUrl = portalUrl.trim();
     const portalHint = trimmedUrl ? ` (${trimmedUrl})` : '';
     const today = new Date().toISOString().slice(0, 10);
-    const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    const in90Days = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10);
     setPendingTeacherPrompt(
-      `Lies auf meinem geteilten Schulportal-Fenster${portalHint} alle Prüfungen, Tests und Abgaben der nächsten 30 Tage (${today} bis ${in30Days}) genau ab und speichere sie mit dem Tool add_school_schedule direkt in meinen OpenStudy-Prüfungsplan.`
+      `Lies auf meinem geteilten Schulportal-Fenster${portalHint} alle Prüfungen, Tests und Abgaben der nächsten 3 Monate (${today} bis ${in90Days}) genau ab und speichere sie mit dem Tool add_school_schedule direkt in meinen OpenStudy-Prüfungsplan.`
     );
     navigate('teacher');
   };

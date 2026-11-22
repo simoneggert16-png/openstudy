@@ -149,9 +149,9 @@ type HubTab = 'obsidian' | 'school' | 'notion';
 const COURSE_COLORS = ['#0e4d48', '#d96b27', '#2a6e66', '#1f6d4c', '#7c634a'];
 
 const AUTO_SYNC_INTERVALS: Array<{ minutes: number; label: string }> = [
-  { minutes: 30, label: 'Alle 30 Min' },
   { minutes: 60, label: 'Stündlich' },
   { minutes: 1440, label: '1× täglich' },
+  { minutes: 2880, label: 'Alle 2 Tage' },
 ];
 
 const SAMPLE_ICS = `BEGIN:VCALENDAR
@@ -746,7 +746,7 @@ export function ObsidianAndImportHub({
   const upcoming30DaysLocalCount = useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const limit = today + 30 * 24 * 60 * 60 * 1000;
+    const limit = today + 90 * 24 * 60 * 60 * 1000;
     return state.schoolSchedule.filter((item) => {
       const parts = item.date.split('-').map(Number);
       if (parts.length !== 3 || parts.some(Number.isNaN)) return false;
@@ -861,7 +861,7 @@ export function ObsidianAndImportHub({
       const payload = {
         enabled: override?.enabled ?? state.provider.autoSyncEnabled,
         intervalMinutes:
-          override?.intervalMinutes ?? (state.provider.autoSyncIntervalMinutes || 60),
+          override?.intervalMinutes ?? (state.provider.autoSyncIntervalMinutes || 2880),
         vaultPath: override?.vaultPath ?? state.provider.obsidianVaultPath ?? '',
         portalUrl: safePortalUrl,
         scanOneNote: true,
@@ -1213,7 +1213,7 @@ export function ObsidianAndImportHub({
 
   const handleToggleAutoSync = async () => {
     const nextEnabled = !state.provider.autoSyncEnabled;
-    const intervalMinutes = state.provider.autoSyncIntervalMinutes || 60;
+    const intervalMinutes = state.provider.autoSyncIntervalMinutes || 2880;
     onUpdateProvider({
       autoSyncEnabled: nextEnabled,
       autoSyncIntervalMinutes: intervalMinutes,
@@ -2310,7 +2310,7 @@ export function ObsidianAndImportHub({
                 Schulportal
               </h2>
               <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
-                Öffne dein Schul- oder Uni-Portal normal im Browser und melde dich mit deinem eigenen Konto an. Hermes liest anschliessend die nächsten 30 Tage vom geteilten Fenster direkt in deinen Prüfungsplan ein.
+                Öffne dein Schul- oder Uni-Portal normal im Browser und melde dich mit deinem eigenen Konto an. Hermes liest anschliessend die nächsten 3 Monate (90 Tage) vom geteilten Fenster direkt in deinen Prüfungsplan ein.
               </p>
             </div>
 
@@ -2350,7 +2350,7 @@ export function ObsidianAndImportHub({
                   className="btn-secondary h-10 px-4 text-[13.5px]"
                 >
                   <MonitorPlay size={15} strokeWidth={1.5} />
-                  <span>Mit Hermes 30 Tage einlesen</span>
+                  <span>Mit Hermes 3 Monate einlesen</span>
                 </button>
               </div>
             </div>
@@ -2370,7 +2370,7 @@ export function ObsidianAndImportHub({
                   Hermes Auto-Sync
                 </h2>
                 <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
-                  Synchronisiert Obsidian-Notizen, OneNote-Seiten und anstehende Termine der nächsten 30 Tage im Hintergrund.
+                  Synchronisiert Obsidian-Notizen, OneNote-Seiten und anstehende Termine der nächsten 3 Monate (90 Tage) im Hintergrund — standardmässig alle 2 Tage.
                 </p>
               </div>
 
@@ -2420,7 +2420,7 @@ export function ObsidianAndImportHub({
               >
                 {AUTO_SYNC_INTERVALS.map((opt) => {
                   const selected =
-                    (state.provider.autoSyncIntervalMinutes || 60) === opt.minutes;
+                    (state.provider.autoSyncIntervalMinutes || 2880) === opt.minutes;
                   return (
                     <button
                       key={opt.minutes}
@@ -2495,7 +2495,7 @@ export function ObsidianAndImportHub({
                 <span className="text-[var(--border-strong)]">·</span>
                 <span>OneNote: {displayedOneNoteCount}</span>
                 <span className="text-[var(--border-strong)]">·</span>
-                <span>Nächste 30 Tage: {displayedUpcoming30Count}</span>
+                <span>Nächste 3 Monate: {displayedUpcoming30Count}</span>
               </div>
             </div>
           </section>
@@ -2519,7 +2519,7 @@ export function ObsidianAndImportHub({
 
             {sortedSchedule.length === 0 ? (
               <p className="text-[13.5px] text-[var(--text-muted)] py-4 text-center">
-                Noch keine Termine eingetragen. Lies die nächsten 30 Tage mit Hermes ein oder öffne unten weitere Import-Formate.
+                Noch keine Termine eingetragen. Lies die nächsten 3 Monate mit Hermes ein oder öffne unten weitere Import-Formate.
               </p>
             ) : (
               <div className="divide-y divide-[var(--border-hairline)]">
