@@ -2,7 +2,7 @@
 
 **Free, privacy-first, open-source AI learning studio for everyone — calm by design, local by default, and usable with zero technical setup.**
 
-Learn any subject or language with a real-time voice tutor, built-in block notes, direct local Obsidian folder access, a focus planner, daily study plans, and flexible Bring-Your-Own-Provider AI support.
+Learn any subject or language with the **Hermes Screen Teacher**, a real-time voice tutor, built-in block notes, direct local Obsidian folder access, a focus planner, daily study plans, and flexible Bring-Your-Own-Provider AI support.
 
 - **Website & Live App:** [simoneggert16-png.github.io/openstudy](https://simoneggert16-png.github.io/openstudy/)
 - **Source Code:** [github.com/simoneggert16-png/openstudy](https://github.com/simoneggert16-png/openstudy)
@@ -41,7 +41,20 @@ Learn any subject or language with a real-time voice tutor, built-in block notes
   - **Adaptive Depth:** Concise 2–4 sentence answers by default, with an on-demand *In Depth* mode for step-by-step explanations.
 - **Built-in Notes Studio & Direct Obsidian Vault Access:** Use the local block editor right away, connect any local **Obsidian** vault folder directly from Chrome or Edge without extra software, or import Notion Markdown exports and `.ics` schedules.
 - **Coach First, Assistant on Demand:** Defaults to **Coach Mode** (guides you to reason through material yourself) and switches to **Assistant Mode** whenever you want flashcards, study plans, or structured summaries generated directly.
-- **Bring Your Own Provider:** Works with Google AI Studio Free Tier, local **Ollama** (offline, zero key), OpenRouter, Anthropic, OpenAI-compatible endpoints, or local CLI agents (**Antigravity**, **Claude Code**, **OpenAI Codex CLI**) via the optional localhost companion bridge (`bridge/server.mjs`).
+- **Bring Your Own Provider:** Works with Google AI Studio Free Tier, **Nous Research Hermes Agent Gateway**, local **Ollama** (offline, zero key), OpenRouter, Anthropic, OpenAI-compatible endpoints, or local CLI agents (**Antigravity**, **Claude Code**, **OpenAI Codex CLI**) via the optional localhost companion bridge (`bridge/server.mjs`).
+
+---
+
+## Hermes Agent Architecture & Cross-App Screen Teacher
+
+OpenStudy embeds a lightweight **Hermes-inspired autonomous learning agent** designed to teach live across other desktop applications while remembering how you learn best:
+
+- **Cross-App Screen Teacher:** Share any window (Excel, Word, OneNote, PDFs, or an IDE). Hermes inspects the live screen context, walks you through tasks step by step via voice or text, and places numbered visual focus spotlights on formulas, clauses, or controls.
+- **Always-on-Top Floating Teacher:** Detach the teacher into a compact, always-on-top **Document Picture-in-Picture** window so guidance stays visible above other desktop programs — with optional native **Windows Desktop Pointer** highlights through the local Companion Bridge (`127.0.0.1:4319`).
+- **Autonomous Tool Calling:** During a session, Hermes can execute structured workspace actions on its own — placing screen spotlights, saving study notes, creating spaced-repetition flashcards, adding daily plan tasks, or recording durable learner insights.
+- **`SKILL.md` Skills System:** Teach Hermes repeatable workflows (e.g., exam simulation, formula walkthroughs, essay feedback) using editable, toggleable `SKILL.md`-style skill definitions stored locally.
+- **Persistent Learner Memory:** Keeps a transparent, user-editable memory of your preferences, strengths, weak spots, and study goals directly in local storage so explanations adapt over time without external cloud profiles.
+- **Nous Research Hermes Gateway Compatible:** Connect an existing local **Nous Research Hermes** gateway (`http://127.0.0.1:9119` by default) or the `hermes` CLI via Settings → *KI & Sprache* → *Für Fortgeschrittene*.
 
 ---
 
@@ -70,13 +83,13 @@ npm run dev
 
 Open `http://127.0.0.1:5175/` (or `http://127.0.0.1:5175/?mode=demo` for the isolated demo workspace).
 
-### Optional Local Companion Bridge (Local CLI Agents & Background Helpers)
+### Optional Local Companion Bridge (Local CLI Agents, Hermes & Desktop Pointer)
 
 ```bash
 npm run bridge
 ```
 
-Runs strictly on `127.0.0.1:4319` (never exposed to the network) to connect local installations of Antigravity, Claude Code, or Codex CLI.
+Runs strictly on `127.0.0.1:4319` (never exposed to the network) to connect local installations of Nous Research Hermes, Antigravity, Claude Code, or Codex CLI, and to power the optional Windows Desktop Pointer overlay during cross-app screen teaching sessions.
 
 ---
 

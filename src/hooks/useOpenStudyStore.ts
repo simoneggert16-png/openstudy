@@ -5,12 +5,16 @@ import {
   ColorSchemeId,
   DailyPlanTask,
   FocusSessionLog,
+  HermesMemoryEntry,
+  HermesSkill,
+  HermesToolExecution,
   MasteryState,
   NoteBlock,
   ObsidianNote,
   OpenStudyState,
   ProviderConfig,
   SchoolScheduleItem,
+  ScreenSpotlight,
   StudyCard,
   StudyNotePage,
   SubjectCourse,
@@ -78,6 +82,12 @@ function loadState(): OpenStudyState {
         ...demo.voice,
         ...(parsed.voice ?? {}),
       },
+      hermesMemory: Array.isArray(parsed.hermesMemory) ? parsed.hermesMemory : demo.hermesMemory,
+      hermesSkills: Array.isArray(parsed.hermesSkills) && parsed.hermesSkills.length > 0
+        ? parsed.hermesSkills
+        : demo.hermesSkills,
+      hermesActionLog: Array.isArray(parsed.hermesActionLog) ? parsed.hermesActionLog : demo.hermesActionLog,
+      screenSpotlights: [],
     };
   } catch {
     return demo;
@@ -291,6 +301,59 @@ export function useOpenStudyStore() {
     }));
   }, []);
 
+  const addHermesMemory = useCallback((entry: HermesMemoryEntry) => {
+    setState((s) => ({
+      ...s,
+      hermesMemory: [entry, ...s.hermesMemory.filter((m) => m.fact !== entry.fact)].slice(0, 40),
+    }));
+  }, []);
+
+  const removeHermesMemory = useCallback((id: string) => {
+    setState((s) => ({
+      ...s,
+      hermesMemory: s.hermesMemory.filter((m) => m.id !== id),
+    }));
+  }, []);
+
+  const upsertHermesSkill = useCallback((skill: HermesSkill) => {
+    setState((s) => {
+      const exists = s.hermesSkills.some((sk) => sk.id === skill.id || sk.name === skill.name);
+      return {
+        ...s,
+        hermesSkills: exists
+          ? s.hermesSkills.map((sk) => (sk.id === skill.id || sk.name === skill.name ? skill : sk))
+          : [skill, ...s.hermesSkills],
+      };
+    });
+  }, []);
+
+  const toggleHermesSkill = useCallback((id: string) => {
+    setState((s) => ({
+      ...s,
+      hermesSkills: s.hermesSkills.map((sk) =>
+        sk.id === id ? { ...sk, enabled: !sk.enabled } : sk
+      ),
+    }));
+  }, []);
+
+  const logHermesAction = useCallback((action: HermesToolExecution) => {
+    setState((s) => ({
+      ...s,
+      hermesActionLog: [action, ...s.hermesActionLog].slice(0, 50),
+    }));
+  }, []);
+
+  const addScreenSpotlight = useCallback((spotlight: ScreenSpotlight) => {
+    setState((s) => ({
+      ...s,
+      screenSpotlights: [...s.screenSpotlights.slice(-5), spotlight],
+    }));
+  }, []);
+
+  const clearScreenSpotlights = useCallback(() => {
+    setState((s) => ({ ...s, screenSpotlights: [] }));
+  }, []);
+
   const resetToDemo = useCallback(() => {
     const fresh = createDemoState();
     setState((prev) => ({
@@ -324,6 +387,13 @@ export function useOpenStudyStore() {
     setObsidianNotes,
     toggleObsidianContext,
     addSchoolScheduleItems,
+    addHermesMemory,
+    removeHermesMemory,
+    upsertHermesSkill,
+    toggleHermesSkill,
+    logHermesAction,
+    addScreenSpotlight,
+    clearScreenSpotlights,
     resetToDemo,
   };
 }

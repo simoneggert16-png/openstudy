@@ -37,6 +37,9 @@ export interface OpenStudyVoiceCallbacks {
   onAudioLevels?: (levels: AudioTelemetryLevels) => void;
   onTranscript?: (entry: VoiceTranscriptEntry) => void;
   onError?: (message: string) => void;
+  onToolCall?: (
+    calls: Array<{ id?: string; name: string; args: Record<string, unknown> }>
+  ) => Promise<Array<{ id?: string; name: string; response: Record<string, unknown> }>>;
 }
 
 export interface OpenStudyVoiceConnectOptions {
@@ -47,6 +50,7 @@ export interface OpenStudyVoiceConnectOptions {
   languageLock: StudyLanguage;
   pace: SpeechPace;
   systemPrompt: string;
+  tools?: Array<{ functionDeclarations: unknown[] }>;
 }
 
 export const PACE_PLAYBACK_RATE: Record<SpeechPace, number> = {
@@ -759,6 +763,27 @@ export class OpenStudyVoiceClient {
     }
   }
 
+  sendVideoFrame(base64Jpeg: string): boolean {
+    if (this.state !== 'connected' || !this.session || !base64Jpeg) {
+      return false;
+    }
+    const cleaned = base64Jpeg.includes(',')
+      ? base64Jpeg.slice(base64Jpeg.indexOf(',') + 1)
+      : base64Jpeg;
+    if (!cleaned) return false;
+    try {
+      this.session.sendRealtimeInput({
+        video: {
+          data: cleaned,
+          mimeType: 'image/jpeg',
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   notifyDepthChange(depth: ResponseDepth, languageLock: StudyLanguage): void {
     if (!this.session || this.state !== 'connected') return;
     const langName = LANGUAGE_META[languageLock].nativeName;
@@ -964,6 +989,9 @@ export class OpenStudyVoiceClient {
             contextWindowCompression: {
               slidingWindow: {},
             },
+            ...(options.tools && options.tools.length > 0
+              ? { tools: options.tools as never }
+              : {}),
           },
           callbacks: {
             onopen: () => {
@@ -1150,6 +1178,65 @@ export class OpenStudyVoiceClient {
         timestamp: Date.now(),
         finalized: true,
       });
+    }
+
+    if (
+      message.toolCall?.functionCalls &&
+      message.toolCall.functionCalls.length > 0 &&
+      this.callbacks.onToolCall
+    ) {
+      const normalizedCalls = message.toolCall.functionCalls
+        .filter((fc): fc is typeof fc & { name: string } => typeof fc.name === 'string' && fc.name.length > 0)
+        .map((fc) => ({
+          id: fc.id,
+          name: fc.name,
+          args:
+            fc.args && typeof fc.args === 'object' && !Array.isArray(fc.args)
+              ? (fc.args as Record<string, unknown>)
+              : {},
+        }));
+
+      if (normalizedCalls.length > 0) {
+        const activeToken = this.connectingToken;
+        void (async () => {
+          try {
+            const responses = await this.callbacks.onToolCall?.(normalizedCalls);
+            if (
+              !responses ||
+              responses.length === 0 ||
+              activeToken !== this.connectingToken ||
+              this.state !== 'connected'
+            ) {
+              return;
+            }
+            this.session?.sendToolResponse({
+              functionResponses: responses.map((res) => ({
+                id: res.id,
+                name: res.name,
+                response: res.response,
+              })),
+            });
+          } catch {
+            if (activeToken !== this.connectingToken || this.state !== 'connected') {
+              return;
+            }
+            try {
+              this.session?.sendToolResponse({
+                functionResponses: normalizedCalls.map((call) => ({
+                  id: call.id,
+                  name: call.name,
+                  response: {
+                    ok: false,
+                    error: 'Aktion konnte nicht ausgeführt werden.',
+                  },
+                })),
+              });
+            } catch {
+              // ignore socket error so voice call stays alive
+            }
+          }
+        })();
+      }
     }
 
     const content = message.serverContent;
@@ -1440,3 +1527,6 @@ export class OpenStudyVoiceClient {
     this.disconnectInternal(false);
   }
 }
+
+export const OpenStudyVoiceSession = OpenStudyVoiceClient;
+export type OpenStudyVoiceSession = OpenStudyVoiceClient;

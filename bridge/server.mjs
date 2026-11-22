@@ -4,9 +4,10 @@
  *
  * Security & privacy guarantees:
  * - Listens strictly on 127.0.0.1 (loopback only, never 0.0.0.0).
- * - CORS restricted exclusively to localhost / 127.0.0.1 origins.
+ * - CORS restricted exclusively to localhost / 127.0.0.1 / [::1] and the official OpenStudy HTTPS origin.
  * - Zero external dependencies (Node.js v20+ built-ins only).
  * - Never reads credential files or writes inside the OpenStudy git repository.
+ * - Strictly restricts Hermes Gateway proxy requests to local loopback addresses (zero SSRF).
  * - Invokes only sanctioned local CLIs with strict argument arrays (no shell interpolation).
  */
 
@@ -18,16 +19,29 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 4319;
 const AGENT_TIMEOUT_MS = 45_000;
 const MAX_BODY_BYTES = 256 * 1024;
+const MAX_CHAT_BODY_BYTES = 512 * 1024;
 const MAX_OUTPUT_BYTES = 512 * 1024;
 const MAX_OBSIDIAN_FILES = 250;
 const MAX_NOTE_BYTES = 256 * 1024;
 const MAX_NOTE_CONTENT_CHARS = 12_000;
 const MAX_EXCERPT_CHARS = 220;
+
+const DEFAULT_HERMES_GATEWAY_URL = 'http://127.0.0.1:9119';
+const HERMES_PROBE_TIMEOUT_MS = 1_500;
+const HERMES_CHAT_TIMEOUT_MS = 45_000;
+const MAX_HERMES_SKILL_BYTES = 32 * 1024;
+const MAX_HERMES_SKILLS = 100;
+const MAX_HERMES_MEMORY_ENTRIES = 100;
+
+const DESKTOP_WINDOW_TIMEOUT_MS = 1_500;
+const HIGHLIGHT_MIN_DURATION_MS = 1_500;
+const HIGHLIGHT_MAX_DURATION_MS = 7_000;
+const HIGHLIGHT_DEFAULT_DURATION_MS = 4_500;
 
 const PORT = (() => {
   const raw = Number(process.env.OPENSTUDY_BRIDGE_PORT || DEFAULT_PORT);
@@ -53,6 +67,11 @@ const CLI_DEFINITIONS = {
     binaries: ['codex'],
     agentSupported: true,
   },
+  hermes: {
+    id: 'hermes',
+    binaries: ['hermes'],
+    agentSupported: true,
+  },
   ollama: {
     id: 'ollama',
     binaries: ['ollama'],
@@ -62,6 +81,9 @@ const CLI_DEFINITIONS = {
 
 const SENSITIVE_NAME_PATTERN =
   /(^|[._\-\s])(env|passwords?|passwd|passwort|passwörter|passwoerter|secrets?|credits?|kreditkarten?|cardnumber|apikeys?|api_keys?|keys?|tokens?|credentials?|private|id_rsa|id_ed25519|seedphrase|recovery|banking|steuer|passport|ausweis)([._\-\s]|$)|^\.env/i;
+
+const SENSITIVE_WINDOW_PATTERN =
+  /1password|bitwarden|keepass|lastpass|keychain|credential|private|incognito|inprivate|banking|e-?banking|kreditkarte|credit\s*card|passwort|password|passwörter|passwoerter|dashlane|enpass|proton\s*pass|nordpass/i;
 
 const IGNORED_DIRS = new Set([
   '.obsidian',
@@ -73,15 +95,20 @@ const IGNORED_DIRS = new Set([
   'venv',
 ]);
 
+const SANCTIONED_HTTPS_HOSTS = new Set(['simoneggert16-png.github.io']);
+
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   try {
     const parsed = new URL(origin);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return false;
-    }
     const host = parsed.hostname.toLowerCase();
-    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+    if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    }
+    if (parsed.protocol === 'https:' && SANCTIONED_HTTPS_HOSTS.has(host)) {
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -95,6 +122,9 @@ function applyCorsHeaders(req, res) {
     }
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
+    if (req.headers['access-control-request-private-network'] === 'true') {
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    }
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -111,15 +141,16 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, maxBytes = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let totalBytes = 0;
 
     req.on('data', (chunk) => {
       totalBytes += chunk.length;
-      if (totalBytes > MAX_BODY_BYTES) {
-        reject(Object.assign(new Error('Request body exceeds 256 KB limit.'), { status: 413 }));
+      if (totalBytes > maxBytes) {
+        const limitKb = Math.round(maxBytes / 1024);
+        reject(Object.assign(new Error(`Request body exceeds ${limitKb} KB limit.`), { status: 413 }));
         req.destroy();
         return;
       }
@@ -262,6 +293,7 @@ function normalizeToolId(rawTool) {
   if (key === 'agy' || key === 'antigravity') return 'antigravity';
   if (key === 'claude') return 'claude';
   if (key === 'codex') return 'codex';
+  if (key === 'hermes') return 'hermes';
   return null;
 }
 
@@ -319,6 +351,8 @@ function runSanctionedCli(toolId, systemPrompt, userPrompt) {
     } else if (toolId === 'codex') {
       spawnArgs = ['exec', '-'];
       stdinPayload = combinedPrompt;
+    } else if (toolId === 'hermes') {
+      spawnArgs = ['chat', '-q', combinedPrompt];
     }
 
     if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(executablePath)) {
@@ -749,11 +783,1161 @@ function computeNextReminderIso(reminders) {
   return null;
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Nous Research Hermes Gateway, Local Skills (SKILL.md) & Learner Memory    */
+/* -------------------------------------------------------------------------- */
+
+function validateLoopbackGatewayUrl(rawUrl) {
+  if (rawUrl === undefined || rawUrl === null || String(rawUrl).trim() === '') {
+    return { ok: true, url: DEFAULT_HERMES_GATEWAY_URL };
+  }
+  if (typeof rawUrl !== 'string') {
+    return { ok: false, error: 'Invalid "gatewayUrl". Expected a localhost URL string.' };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    return { ok: false, error: 'Malformed "gatewayUrl". Expected e.g. http://127.0.0.1:9119.' };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false, error: 'Invalid "gatewayUrl" protocol. Only http and https are allowed.' };
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    return { ok: false, error: 'Invalid "gatewayUrl". Credentials, query strings, and fragments are not permitted.' };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]' && host !== '::1') {
+    return {
+      ok: false,
+      error: 'Blocked non-loopback "gatewayUrl". Only 127.0.0.1, localhost, and [::1] are permitted.',
+    };
+  }
+
+  const cleanPath = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '');
+  return { ok: true, url: `${parsed.origin}${cleanPath}` };
+}
+
+async function readLimitedText(response, maxBytes = MAX_OUTPUT_BYTES) {
+  if (!response.body || typeof response.body.getReader !== 'function') {
+    const text = await response.text();
+    return text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      if (total + value.byteLength > maxBytes) {
+        const remaining = maxBytes - total;
+        if (remaining > 0) {
+          chunks.push(Buffer.from(value.buffer, value.byteOffset, remaining));
+        }
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+      total += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function probeHermesGateway(rawGatewayUrl) {
+  const checked = validateLoopbackGatewayUrl(rawGatewayUrl);
+  if (!checked.ok) {
+    return {
+      valid: false,
+      online: false,
+      gatewayUrl: DEFAULT_HERMES_GATEWAY_URL,
+      models: [],
+      error: checked.error,
+    };
+  }
+
+  const baseUrl = checked.url;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HERMES_PROBE_TIMEOUT_MS);
+
+  try {
+    const modelsRes = await fetch(`${baseUrl}/v1/models`, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+
+    if (modelsRes.ok) {
+      let models = [];
+      try {
+        const text = await readLimitedText(modelsRes, 64 * 1024);
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed?.data)) {
+          models = parsed.data
+            .map((item) => (typeof item?.id === 'string' ? item.id : null))
+            .filter(Boolean)
+            .slice(0, 30);
+        }
+      } catch {
+        // non-JSON /v1/models response still indicates online gateway
+      }
+      return { valid: true, online: true, gatewayUrl: baseUrl, models };
+    }
+
+    if (modelsRes.status === 401 || modelsRes.status === 403) {
+      return { valid: true, online: true, gatewayUrl: baseUrl, models: [] };
+    }
+
+    if (modelsRes.status === 404 || modelsRes.status === 405) {
+      const healthRes = await fetch(`${baseUrl}/health`, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+      return {
+        valid: true,
+        online: healthRes.ok || healthRes.status === 401 || healthRes.status === 403,
+        gatewayUrl: baseUrl,
+        models: [],
+      };
+    }
+
+    return { valid: true, online: false, gatewayUrl: baseUrl, models: [] };
+  } catch {
+    return { valid: true, online: false, gatewayUrl: baseUrl, models: [] };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function extractAssistantReply(payload) {
+  const content = payload?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return '';
+}
+
+async function proxyHermesChat(body) {
+  const checked = validateLoopbackGatewayUrl(body.gatewayUrl);
+  if (!checked.ok) {
+    return { status: 400, payload: { ok: false, error: checked.error } };
+  }
+
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    return {
+      status: 400,
+      payload: { ok: false, error: 'Field "messages" must be a non-empty array.' },
+    };
+  }
+
+  const validMessages = body.messages.every(
+    (msg) => msg && typeof msg === 'object' && typeof msg.role === 'string' && msg.role.trim().length > 0
+  );
+  if (!validMessages) {
+    return {
+      status: 400,
+      payload: { ok: false, error: 'Each entry in "messages" must include a valid "role".' },
+    };
+  }
+
+  const baseUrl = checked.url;
+  const forwardPayload = {
+    model:
+      typeof body.model === 'string' && body.model.trim()
+        ? body.model.trim().slice(0, 120)
+        : 'hermes-agent',
+    messages: body.messages,
+    stream: false,
+  };
+
+  if (Array.isArray(body.tools) && body.tools.length > 0) {
+    forwardPayload.tools = body.tools;
+    if (typeof body.tool_choice === 'string' || (body.tool_choice && typeof body.tool_choice === 'object')) {
+      forwardPayload.tool_choice = body.tool_choice;
+    }
+  }
+  if (typeof body.temperature === 'number' && Number.isFinite(body.temperature)) {
+    forwardPayload.temperature = Math.min(2, Math.max(0, body.temperature));
+  }
+  if (typeof body.max_tokens === 'number' && Number.isInteger(body.max_tokens) && body.max_tokens > 0) {
+    forwardPayload.max_tokens = Math.min(32_768, body.max_tokens);
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (typeof body.apiKey === 'string' && body.apiKey.trim()) {
+    headers.Authorization = `Bearer ${body.apiKey.trim()}`;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HERMES_CHAT_TIMEOUT_MS);
+
+  try {
+    const upstream = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(forwardPayload),
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+
+    if (upstream.status >= 300 && upstream.status < 400) {
+      return {
+        status: 502,
+        payload: {
+          ok: false,
+          gatewayOnline: true,
+          gatewayUrl: baseUrl,
+          error: 'Hermes Gateway returned an unexpected redirect.',
+        },
+      };
+    }
+
+    const rawText = await readLimitedText(upstream, MAX_OUTPUT_BYTES);
+    let parsed = null;
+    try {
+      parsed = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      parsed = null;
+    }
+
+    if (!upstream.ok) {
+      const upstreamError =
+        parsed?.error?.message ||
+        (typeof parsed?.error === 'string' ? parsed.error : '') ||
+        parsed?.message ||
+        rawText.slice(0, 260) ||
+        `Hermes Gateway returned HTTP ${upstream.status}.`;
+      return {
+        status: upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502,
+        payload: {
+          ok: false,
+          gatewayOnline: true,
+          gatewayUrl: baseUrl,
+          error: upstreamError,
+        },
+      };
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return {
+        status: 502,
+        payload: {
+          ok: false,
+          gatewayOnline: true,
+          gatewayUrl: baseUrl,
+          error: 'Hermes Gateway returned a non-JSON response.',
+        },
+      };
+    }
+
+    const reply = extractAssistantReply(parsed);
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        ...parsed,
+        reply,
+      },
+    };
+  } catch (err) {
+    const cliAvailable = Boolean(findExecutableOnPath('hermes'));
+    const timedOut = err && err.name === 'AbortError';
+    return {
+      status: timedOut ? 504 : 503,
+      payload: {
+        ok: false,
+        gatewayOnline: false,
+        cliAvailable,
+        fallbackAvailable: cliAvailable,
+        gatewayUrl: baseUrl,
+        error: timedOut
+          ? `Hermes Gateway unter ${baseUrl} hat nicht rechtzeitig geantwortet.`
+          : cliAvailable
+            ? `Hermes Gateway ist unter ${baseUrl} nicht gestartet. Die lokale hermes-CLI wurde erkannt und kann über /api/agent genutzt werden.`
+            : `Hermes Gateway ist unter ${baseUrl} nicht erreichbar und die lokale hermes-CLI wurde nicht gefunden.`,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function getHermesDir() {
+  return path.join(os.homedir(), '.openstudy', 'hermes');
+}
+
+function getHermesSkillsDir() {
+  return path.join(getHermesDir(), 'skills');
+}
+
+function getHermesMemoryPath() {
+  return path.join(getHermesDir(), 'memory.json');
+}
+
+function sanitizeSkillSlug(rawName) {
+  if (typeof rawName !== 'string') return '';
+  const slug = rawName
+    .trim()
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .replace(/[\s/\\.]+/g, '-')
+    .replace(/[^a-z0-9_-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-_]+|[-_]+$/g, '')
+    .slice(0, 64);
+
+  if (!slug || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(slug)) {
+    return '';
+  }
+  if (SENSITIVE_NAME_PATTERN.test(slug)) {
+    return '';
+  }
+  return slug;
+}
+
+function parseYamlScalar(rawValue) {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return '';
+  if (trimmed === 'true') return true;
+  if (trimmed === 'false') return false;
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    if (trimmed.startsWith('"')) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return trimmed.slice(1, -1);
+      }
+    }
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
+}
+
+function parseSkillMarkdown(rawText, fallbackSlug, fileName) {
+  const normalized = String(rawText || '').replace(/\r\n/g, '\n');
+  const frontmatterMatch = normalized.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+
+  const meta = {};
+  let body = normalized.trim();
+
+  if (frontmatterMatch) {
+    const yamlBlock = frontmatterMatch[1];
+    body = frontmatterMatch[2].trim();
+    for (const line of yamlBlock.split('\n')) {
+      const idx = line.indexOf(':');
+      if (idx <= 0) continue;
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1);
+      if (key) {
+        meta[key] = parseYamlScalar(value);
+      }
+    }
+  }
+
+  const name =
+    typeof meta.name === 'string' && meta.name.trim() ? meta.name.trim().slice(0, 120) : fallbackSlug;
+  const description =
+    typeof meta.description === 'string' ? meta.description.trim().slice(0, 400) : '';
+  const trigger = typeof meta.trigger === 'string' ? meta.trigger.trim().slice(0, 240) : '';
+  const enabled = typeof meta.enabled === 'boolean' ? meta.enabled : true;
+  const updatedAt =
+    typeof meta.updatedAt === 'string' && meta.updatedAt.trim()
+      ? meta.updatedAt.trim()
+      : new Date().toISOString();
+
+  return {
+    id: fallbackSlug,
+    slug: fallbackSlug,
+    fileName,
+    name,
+    description,
+    trigger,
+    instructions: body,
+    enabled,
+    updatedAt,
+    rawMarkdown: normalized,
+  };
+}
+
+function serializeSkillMarkdown(skill) {
+  const name = String(skill.name || skill.slug || '').trim().slice(0, 120);
+  const description = String(skill.description || '').trim().slice(0, 400);
+  const trigger = String(skill.trigger || '').trim().slice(0, 240);
+  const enabled = skill.enabled !== false;
+  const updatedAt = new Date().toISOString();
+  const instructions = String(skill.instructions ?? skill.content ?? '').replace(/\r\n/g, '\n').trim();
+
+  const frontmatter = [
+    '---',
+    `name: ${JSON.stringify(name)}`,
+    `description: ${JSON.stringify(description)}`,
+    `trigger: ${JSON.stringify(trigger)}`,
+    `enabled: ${enabled ? 'true' : 'false'}`,
+    `updatedAt: ${JSON.stringify(updatedAt)}`,
+    '---',
+  ].join('\n');
+
+  const markdown = instructions ? `${frontmatter}\n\n${instructions}\n` : `${frontmatter}\n`;
+  if (Buffer.byteLength(markdown, 'utf8') > MAX_HERMES_SKILL_BYTES) {
+    throw Object.assign(new Error('Skill file exceeds the 32 KB size limit.'), { status: 413 });
+  }
+
+  return { markdown, updatedAt, name, description, trigger, enabled, instructions };
+}
+
+async function loadHermesSkills() {
+  const skillsDir = getHermesSkillsDir();
+  let rootRealPath;
+  try {
+    rootRealPath = await fsp.realpath(skillsDir);
+  } catch {
+    return [];
+  }
+
+  let entries;
+  try {
+    entries = await fsp.readdir(rootRealPath, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  const skills = [];
+
+  for (const entry of entries) {
+    if (skills.length >= MAX_HERMES_SKILLS) break;
+    if (entry.name.startsWith('.') || SENSITIVE_NAME_PATTERN.test(entry.name)) continue;
+
+    let candidatePath = null;
+    let fallbackSlug = '';
+    let fileName = '';
+
+    if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+      fallbackSlug = sanitizeSkillSlug(entry.name.replace(/\.md$/i, ''));
+      if (!fallbackSlug) continue;
+      candidatePath = path.join(rootRealPath, entry.name);
+      fileName = entry.name;
+    } else if (entry.isDirectory()) {
+      fallbackSlug = sanitizeSkillSlug(entry.name);
+      if (!fallbackSlug) continue;
+      const nestedSkill = path.join(rootRealPath, entry.name, 'SKILL.md');
+      try {
+        const nestedStat = await fsp.stat(nestedSkill);
+        if (nestedStat.isFile()) {
+          candidatePath = nestedSkill;
+          fileName = `${entry.name}/SKILL.md`;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (!candidatePath) continue;
+
+    try {
+      const realFile = await fsp.realpath(candidatePath);
+      const relCheck = path.relative(rootRealPath, realFile);
+      if (relCheck.startsWith('..') || path.isAbsolute(relCheck)) continue;
+
+      const stat = await fsp.stat(realFile);
+      if (!stat.isFile() || stat.size > MAX_HERMES_SKILL_BYTES) continue;
+
+      const rawText = await fsp.readFile(realFile, 'utf8');
+      skills.push(parseSkillMarkdown(rawText, fallbackSlug, fileName));
+    } catch {
+      // skip unreadable skill file cleanly
+    }
+  }
+
+  skills.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  return skills;
+}
+
+async function saveHermesSkill(rawSkill) {
+  if (!rawSkill || typeof rawSkill !== 'object') {
+    throw Object.assign(new Error('Skill payload must be a JSON object.'), { status: 400 });
+  }
+
+  const rawIdentifier =
+    typeof rawSkill.slug === 'string' && rawSkill.slug.trim()
+      ? rawSkill.slug
+      : typeof rawSkill.name === 'string' && rawSkill.name.trim()
+        ? rawSkill.name
+        : typeof rawSkill.id === 'string'
+          ? rawSkill.id
+          : '';
+
+  const slug = sanitizeSkillSlug(rawIdentifier);
+  if (!slug) {
+    throw Object.assign(
+      new Error('Skill "name" must produce a valid safe slug using [a-z0-9-_].'),
+      { status: 400 }
+    );
+  }
+
+  const skillsDir = getHermesSkillsDir();
+  await fsp.mkdir(skillsDir, { recursive: true });
+  const resolvedDir = path.resolve(skillsDir);
+  const fileName = `${slug}.md`;
+  const targetPath = path.resolve(resolvedDir, fileName);
+
+  const relCheck = path.relative(resolvedDir, targetPath);
+  if (relCheck.startsWith('..') || path.isAbsolute(relCheck) || relCheck !== fileName) {
+    throw Object.assign(new Error('Invalid skill target path.'), { status: 400 });
+  }
+
+  const serialized = serializeSkillMarkdown({
+    ...rawSkill,
+    slug,
+    name: typeof rawSkill.name === 'string' && rawSkill.name.trim() ? rawSkill.name : slug,
+  });
+
+  const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tempPath, serialized.markdown, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  await fsp.rename(tempPath, targetPath);
+
+  return {
+    id: slug,
+    slug,
+    fileName,
+    name: serialized.name,
+    description: serialized.description,
+    trigger: serialized.trigger,
+    instructions: serialized.instructions,
+    enabled: serialized.enabled,
+    updatedAt: serialized.updatedAt,
+    rawMarkdown: serialized.markdown,
+  };
+}
+
+async function deleteHermesSkill(rawName) {
+  const slug = sanitizeSkillSlug(rawName || '');
+  if (!slug) {
+    throw Object.assign(new Error('Query parameter "name" must be a valid skill slug.'), {
+      status: 400,
+    });
+  }
+
+  const skillsDir = path.resolve(getHermesSkillsDir());
+  const fileName = `${slug}.md`;
+  const targetPath = path.resolve(skillsDir, fileName);
+  const relCheck = path.relative(skillsDir, targetPath);
+  if (relCheck.startsWith('..') || path.isAbsolute(relCheck) || relCheck !== fileName) {
+    throw Object.assign(new Error('Invalid skill target path.'), { status: 400 });
+  }
+
+  try {
+    await fsp.unlink(targetPath);
+    return true;
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+const VALID_MEMORY_CATEGORIES = new Set(['preference', 'strength', 'weakness', 'goal', 'workflow']);
+const VALID_MEMORY_SOURCES = new Set(['agent', 'user']);
+
+function sanitizeMemoryEntry(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const rawFact =
+    typeof raw.fact === 'string'
+      ? raw.fact
+      : typeof raw.content === 'string'
+        ? raw.content
+        : typeof raw.text === 'string'
+          ? raw.text
+          : '';
+  const fact = rawFact.replace(/\s+/g, ' ').trim().slice(0, 500);
+  if (!fact) return null;
+
+  const category = VALID_MEMORY_CATEGORIES.has(raw.category) ? raw.category : 'preference';
+  const source = VALID_MEMORY_SOURCES.has(raw.source) ? raw.source : 'user';
+  const id =
+    typeof raw.id === 'string' && raw.id.trim()
+      ? raw.id.trim().slice(0, 80)
+      : crypto.randomUUID();
+  const createdAt =
+    typeof raw.createdAt === 'string' && raw.createdAt.trim()
+      ? raw.createdAt.trim().slice(0, 40)
+      : new Date().toISOString();
+
+  return { id, fact, category, createdAt, source };
+}
+
+function deduplicateMemoryEntries(rawList) {
+  const seenFacts = new Set();
+  const entries = [];
+  for (const item of rawList) {
+    const clean = sanitizeMemoryEntry(item);
+    if (!clean) continue;
+    const key = clean.fact.toLowerCase();
+    if (seenFacts.has(key)) continue;
+    seenFacts.add(key);
+    entries.push(clean);
+    if (entries.length >= MAX_HERMES_MEMORY_ENTRIES) break;
+  }
+  return entries;
+}
+
+async function loadHermesMemory() {
+  const filePath = getHermesMemoryPath();
+  try {
+    const raw = await fsp.readFile(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.entries)
+        ? parsed.entries
+        : Array.isArray(parsed?.memory)
+          ? parsed.memory
+          : [];
+    const entries = deduplicateMemoryEntries(list);
+    return {
+      entries,
+      updatedAt:
+        typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    return {
+      entries: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+}
+
+async function saveHermesMemory(rawEntries) {
+  const filePath = getHermesMemoryPath();
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+
+  const entries = deduplicateMemoryEntries(Array.isArray(rawEntries) ? rawEntries : []);
+  const payload = {
+    entries,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  await fsp.rename(tempPath, filePath);
+  return payload;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Safe Desktop Teacher Helper (Windows Read-Only Context & Click-Through)   */
+/* -------------------------------------------------------------------------- */
+
+const ACTIVE_WINDOW_PS_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
+  'Add-Type -Name Win -Namespace OpenStudyWinCtx -MemberDefinition @"',
+  '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+  '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int count);',
+  '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);',
+  '"@',
+  '$h = [OpenStudyWinCtx.Win]::GetForegroundWindow()',
+  '$sb = New-Object System.Text.StringBuilder 512',
+  'if ($h -ne [IntPtr]::Zero) { [void][OpenStudyWinCtx.Win]::GetWindowText($h, $sb, 512) }',
+  '$pidOut = [uint32]0',
+  'if ($h -ne [IntPtr]::Zero) { [void][OpenStudyWinCtx.Win]::GetWindowThreadProcessId($h, [ref]$pidOut) }',
+  '$procName = ""',
+  'if ($pidOut -gt 0) { try { $procName = [System.Diagnostics.Process]::GetProcessById([int]$pidOut).ProcessName } catch { $procName = "" } }',
+  '@{ title = $sb.ToString(); processName = $procName } | ConvertTo-Json -Compress',
+].join('\n');
+
+const ACTIVE_WINDOW_PS_B64 = Buffer.from(ACTIVE_WINDOW_PS_SCRIPT, 'utf16le').toString('base64');
+
+function filterWindowPrivacy(rawTitle, rawProcessName) {
+  const title = typeof rawTitle === 'string' ? rawTitle.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  const processName =
+    typeof rawProcessName === 'string' ? rawProcessName.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+
+  if (SENSITIVE_WINDOW_PATTERN.test(title) || SENSITIVE_WINDOW_PATTERN.test(processName)) {
+    return {
+      title: '[Geschütztes Fenster]',
+      processName: '',
+      redacted: true,
+    };
+  }
+
+  return { title, processName, redacted: false };
+}
+
+function getActiveDesktopWindow() {
+  if (process.platform !== 'win32') {
+    return Promise.resolve({
+      ok: true,
+      available: false,
+      title: '',
+      processName: '',
+    });
+  }
+
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-EncodedCommand',
+          ACTIVE_WINDOW_PS_B64,
+        ],
+        {
+          shell: false,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }
+      );
+    } catch {
+      resolve({ ok: true, available: false, title: '', processName: '' });
+      return;
+    }
+
+    const chunks = [];
+    let totalBytes = 0;
+    let settled = false;
+
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      done({ ok: true, available: true, title: '', processName: '' });
+    }, DESKTOP_WINDOW_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk) => {
+      if (totalBytes < 16 * 1024) {
+        chunks.push(chunk);
+        totalBytes += chunk.length;
+      }
+    });
+
+    child.on('error', () => {
+      done({ ok: true, available: false, title: '', processName: '' });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        done({ ok: true, available: true, title: '', processName: '' });
+        return;
+      }
+      try {
+        const raw = Buffer.concat(chunks).toString('utf8').trim();
+        const parsed = raw ? JSON.parse(raw) : {};
+        const filtered = filterWindowPrivacy(parsed?.title, parsed?.processName);
+        done({
+          ok: true,
+          available: true,
+          title: filtered.title,
+          processName: filtered.processName,
+          redacted: filtered.redacted,
+        });
+      } catch {
+        done({ ok: true, available: true, title: '', processName: '' });
+      }
+    });
+  });
+}
+
+function sanitizeHighlightLabel(rawLabel) {
+  if (typeof rawLabel !== 'string') return '';
+  return rawLabel
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[^\p{L}\p{N} .,:\-()/+]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48);
+}
+
+const HIGHLIGHT_PS_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  'Add-Type -AssemblyName System.Windows.Forms',
+  'Add-Type -AssemblyName System.Drawing',
+  "$xPct = [double]::Parse($env:OPENSTUDY_HALO_X, [System.Globalization.CultureInfo]::InvariantCulture)",
+  "$yPct = [double]::Parse($env:OPENSTUDY_HALO_Y, [System.Globalization.CultureInfo]::InvariantCulture)",
+  '$labelText = [string]$env:OPENSTUDY_HALO_LABEL',
+  '$stepNum = 0',
+  '[void][int]::TryParse($env:OPENSTUDY_HALO_STEP, [ref]$stepNum)',
+  '$durationMs = 4500',
+  '[void][int]::TryParse($env:OPENSTUDY_HALO_DURATION, [ref]$durationMs)',
+  '$csharp = @"',
+  'using System;',
+  'using System.Drawing;',
+  'using System.Drawing.Drawing2D;',
+  'using System.Drawing.Imaging;',
+  'using System.Drawing.Text;',
+  'using System.Runtime.InteropServices;',
+  'using System.Windows.Forms;',
+  'public class OpenStudyTeacherHalo : Form {',
+  '    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int x; public int y; }',
+  '    [StructLayout(LayoutKind.Sequential)] public struct SIZE { public int cx; public int cy; }',
+  '    [StructLayout(LayoutKind.Sequential, Pack = 1)] public struct BLENDFUNCTION {',
+  '        public byte BlendOp; public byte BlendFlags; public byte SourceConstantAlpha; public byte AlphaFormat;',
+  '    }',
+  '    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]',
+  '    private static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pprSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);',
+  '    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)] private static extern IntPtr GetDC(IntPtr hWnd);',
+  '    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);',
+  '    [DllImport("gdi32.dll", ExactSpelling = true, SetLastError = true)] private static extern IntPtr CreateCompatibleDC(IntPtr hDC);',
+  '    [DllImport("gdi32.dll", ExactSpelling = true, SetLastError = true)] private static extern bool DeleteDC(IntPtr hdc);',
+  '    [DllImport("gdi32.dll", ExactSpelling = true, SetLastError = true)] private static extern IntPtr SelectObject(IntPtr hDC, IntPtr hObject);',
+  '    [DllImport("gdi32.dll", ExactSpelling = true, SetLastError = true)] private static extern bool DeleteObject(IntPtr hObject);',
+  '    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();',
+  '    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);',
+  '    private readonly string _label;',
+  '    private readonly int _stepNumber;',
+  '    private readonly int _durationMs;',
+  '    private readonly int _ringCx;',
+  '    private readonly int _ringCy;',
+  '    private readonly bool _pillOnLeft;',
+  '    private readonly Timer _timer;',
+  '    private readonly int _startTick;',
+  '    public OpenStudyTeacherHalo(int targetX, int targetY, Rectangle bounds, string label, int stepNumber, int durationMs) {',
+  '        _label = label ?? "";',
+  '        _stepNumber = stepNumber;',
+  '        _durationMs = durationMs;',
+  '        _pillOnLeft = targetX > (bounds.Left + (int)(bounds.Width * 0.62));',
+  '        int formW = 460;',
+  '        int formH = 140;',
+  '        _ringCx = _pillOnLeft ? (formW - 58) : 58;',
+  '        _ringCy = formH / 2;',
+  '        int left = Math.Max(bounds.Left + 4, Math.Min(bounds.Right - formW - 4, targetX - _ringCx));',
+  '        int top = Math.Max(bounds.Top + 4, Math.Min(bounds.Bottom - formH - 4, targetY - _ringCy));',
+  '        FormBorderStyle = FormBorderStyle.None;',
+  '        StartPosition = FormStartPosition.Manual;',
+  '        ShowInTaskbar = false;',
+  '        TopMost = true;',
+  '        Bounds = new Rectangle(left, top, formW, formH);',
+  '        _startTick = Environment.TickCount;',
+  '        _timer = new Timer { Interval = 33 };',
+  '        _timer.Tick += OnTick;',
+  '    }',
+  '    protected override bool ShowWithoutActivation { get { return true; } }',
+  '    protected override CreateParams CreateParams {',
+  '        get {',
+  '            CreateParams cp = base.CreateParams;',
+  '            cp.ExStyle |= 0x00080000 | 0x00000020 | 0x08000000 | 0x00000080 | 0x00000008;',
+  '            return cp;',
+  '        }',
+  '    }',
+  '    protected override void WndProc(ref Message m) {',
+  '        if (m.Msg == 0x0084) { m.Result = new IntPtr(-1); return; }',
+  '        if (m.Msg == 0x0021) { m.Result = new IntPtr(3); return; }',
+  '        base.WndProc(ref m);',
+  '    }',
+  '    protected override void OnShown(EventArgs e) {',
+  '        base.OnShown(e);',
+  '        SetWindowPos(Handle, new IntPtr(-1), Left, Top, Width, Height, 0x0010 | 0x0002 | 0x0001);',
+  '        RenderFrame(0);',
+  '        _timer.Start();',
+  '    }',
+  '    private void OnTick(object sender, EventArgs e) {',
+  '        int elapsed = unchecked(Environment.TickCount - _startTick);',
+  '        if (elapsed >= _durationMs) {',
+  '            _timer.Stop();',
+  '            Close();',
+  '            return;',
+  '        }',
+  '        RenderFrame(elapsed);',
+  '    }',
+  '    private static GraphicsPath CreateRoundedRect(RectangleF rect, float radius) {',
+  '        float d = radius * 2f;',
+  '        GraphicsPath path = new GraphicsPath();',
+  '        path.AddArc(rect.X, rect.Y, d, d, 180, 90);',
+  '        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);',
+  '        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);',
+  '        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);',
+  '        path.CloseFigure();',
+  '        return path;',
+  '    }',
+  '    private void RenderFrame(int elapsed) {',
+  '        float alphaFactor = 1f;',
+  '        if (elapsed < 220) { alphaFactor = elapsed / 220f; }',
+  '        else if (elapsed > _durationMs - 340) { alphaFactor = Math.Max(0f, (_durationMs - elapsed) / 340f); }',
+  '        byte globalAlpha = (byte)Math.Max(0, Math.Min(255, (int)(alphaFactor * 255f)));',
+  '        float pulse = (float)(0.5 + 0.5 * Math.Sin(elapsed / 260.0));',
+  '        using (Bitmap bmp = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb)) {',
+  '            using (Graphics g = Graphics.FromImage(bmp)) {',
+  '                g.SmoothingMode = SmoothingMode.AntiAlias;',
+  '                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;',
+  '                g.Clear(Color.Transparent);',
+  '                float haloR = 30f + pulse * 8f;',
+  '                using (SolidBrush haloFill = new SolidBrush(Color.FromArgb(40, 217, 107, 39))) {',
+  '                    g.FillEllipse(haloFill, _ringCx - haloR, _ringCy - haloR, haloR * 2f, haloR * 2f);',
+  '                }',
+  '                float outerPulseR = 26f + pulse * 7f;',
+  '                using (Pen pulsePen = new Pen(Color.FromArgb((int)(145 - pulse * 75), 217, 107, 39), 2f)) {',
+  '                    g.DrawEllipse(pulsePen, _ringCx - outerPulseR, _ringCy - outerPulseR, outerPulseR * 2f, outerPulseR * 2f);',
+  '                }',
+  '                float mainR = 23f;',
+  '                using (Pen creamHalo = new Pen(Color.FromArgb(200, 250, 247, 242), 5.5f)) {',
+  '                    g.DrawEllipse(creamHalo, _ringCx - mainR, _ringCy - mainR, mainR * 2f, mainR * 2f);',
+  '                }',
+  '                using (Pen mainPen = new Pen(Color.FromArgb(250, 217, 107, 39), 3.2f)) {',
+  '                    g.DrawEllipse(mainPen, _ringCx - mainR, _ringCy - mainR, mainR * 2f, mainR * 2f);',
+  '                }',
+  '                using (SolidBrush dotFill = new SolidBrush(Color.FromArgb(255, 217, 107, 39)))',
+  '                using (Pen dotBorder = new Pen(Color.FromArgb(240, 250, 247, 242), 1.6f)) {',
+  '                    g.FillEllipse(dotFill, _ringCx - 4f, _ringCy - 4f, 8f, 8f);',
+  '                    g.DrawEllipse(dotBorder, _ringCx - 4f, _ringCy - 4f, 8f, 8f);',
+  '                }',
+  '                if (_stepNumber > 0) {',
+  '                    float bx = _ringCx + 15f;',
+  '                    float by = _ringCy - 30f;',
+  '                    using (SolidBrush badgeFill = new SolidBrush(Color.FromArgb(255, 217, 107, 39)))',
+  '                    using (Pen badgeRing = new Pen(Color.FromArgb(250, 250, 247, 242), 1.8f))',
+  '                    using (Font badgeFont = new Font("Segoe UI", 8.5f, FontStyle.Bold))',
+  '                    using (SolidBrush badgeText = new SolidBrush(Color.FromArgb(255, 250, 247, 242)))',
+  '                    using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }) {',
+  '                        g.FillEllipse(badgeFill, bx, by, 22f, 22f);',
+  '                        g.DrawEllipse(badgeRing, bx, by, 22f, 22f);',
+  '                        g.DrawString(_stepNumber.ToString(), badgeFont, badgeText, new RectangleF(bx, by, 22f, 22f), sf);',
+  '                    }',
+  '                }',
+  '                if (!string.IsNullOrWhiteSpace(_label)) {',
+  '                    using (Font labelFont = new Font("Segoe UI", 10f, FontStyle.Regular)) {',
+  '                        SizeF textSize = g.MeasureString(_label, labelFont, 320);',
+  '                        float padX = 13f;',
+  '                        float padY = 7f;',
+  '                        float pillW = Math.Min(346f, textSize.Width + padX * 2f);',
+  '                        float pillH = Math.Max(32f, textSize.Height + padY * 2f);',
+  '                        float pillX = _pillOnLeft ? (_ringCx - 38f - pillW) : (_ringCx + 38f);',
+  '                        float pillY = _ringCy - pillH / 2f;',
+  '                        RectangleF pillRect = new RectangleF(pillX, pillY, pillW, pillH);',
+  '                        using (GraphicsPath pillPath = CreateRoundedRect(pillRect, 10f))',
+  '                        using (SolidBrush pillBg = new SolidBrush(Color.FromArgb(245, 250, 247, 242)))',
+  '                        using (Pen pillBorder = new Pen(Color.FromArgb(220, 217, 107, 39), 1.4f))',
+  '                        using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(255, 28, 25, 23)))',
+  '                        using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap }) {',
+  '                            g.FillPath(pillBg, pillPath);',
+  '                            g.DrawPath(pillBorder, pillPath);',
+  '                            g.DrawString(_label, labelFont, textBrush, new RectangleF(pillX + padX, pillY, pillW - padX * 2f, pillH), sf);',
+  '                        }',
+  '                    }',
+  '                }',
+  '            }',
+  '            ApplyBitmap(bmp, globalAlpha);',
+  '        }',
+  '    }',
+  '    private void ApplyBitmap(Bitmap bitmap, byte opacity) {',
+  '        IntPtr screenDc = GetDC(IntPtr.Zero);',
+  '        IntPtr memDc = CreateCompatibleDC(screenDc);',
+  '        IntPtr hBitmap = IntPtr.Zero;',
+  '        IntPtr oldBitmap = IntPtr.Zero;',
+  '        try {',
+  '            hBitmap = bitmap.GetHbitmap(Color.FromArgb(0));',
+  '            oldBitmap = SelectObject(memDc, hBitmap);',
+  '            SIZE size = new SIZE { cx = bitmap.Width, cy = bitmap.Height };',
+  '            POINT src = new POINT { x = 0, y = 0 };',
+  '            POINT dst = new POINT { x = Left, y = Top };',
+  '            BLENDFUNCTION blend = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = opacity, AlphaFormat = 1 };',
+  '            UpdateLayeredWindow(Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref blend, 2);',
+  '        } finally {',
+  '            ReleaseDC(IntPtr.Zero, screenDc);',
+  '            if (hBitmap != IntPtr.Zero) { SelectObject(memDc, oldBitmap); DeleteObject(hBitmap); }',
+  '            DeleteDC(memDc);',
+  '        }',
+  '    }',
+  '    protected override void Dispose(bool disposing) {',
+  '        if (disposing && _timer != null) { _timer.Dispose(); }',
+  '        base.Dispose(disposing);',
+  '    }',
+  '}',
+  '"@',
+  'Add-Type -TypeDefinition $csharp -ReferencedAssemblies System.Windows.Forms, System.Drawing',
+  '[void][OpenStudyTeacherHalo]::SetProcessDPIAware()',
+  '$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
+  '$tx = $bounds.Left + [int][Math]::Round($bounds.Width * ($xPct / 100.0))',
+  '$ty = $bounds.Top + [int][Math]::Round($bounds.Height * ($yPct / 100.0))',
+  '$form = New-Object OpenStudyTeacherHalo($tx, $ty, $bounds, $labelText, $stepNum, $durationMs)',
+  '[System.Windows.Forms.Application]::Run($form)',
+].join('\n');
+
+const HIGHLIGHT_PS_B64 = Buffer.from(HIGHLIGHT_PS_SCRIPT, 'utf16le').toString('base64');
+
+let activeHighlightProcess = null;
+let activeHighlightSafetyTimer = null;
+
+function cancelActiveHighlight() {
+  if (activeHighlightSafetyTimer) {
+    clearTimeout(activeHighlightSafetyTimer);
+    activeHighlightSafetyTimer = null;
+  }
+  if (activeHighlightProcess) {
+    const proc = activeHighlightProcess;
+    activeHighlightProcess = null;
+    try {
+      proc.kill('SIGTERM');
+    } catch {
+      // ignore if already exited
+    }
+  }
+}
+
+function showDesktopHighlight(body) {
+  if (body && body.clear === true) {
+    cancelActiveHighlight();
+    return {
+      ok: true,
+      available: process.platform === 'win32',
+      shown: false,
+      cleared: true,
+    };
+  }
+
+  const xPercent = Number(body.xPercent);
+  const yPercent = Number(body.yPercent);
+
+  if (
+    !Number.isFinite(xPercent) ||
+    !Number.isFinite(yPercent) ||
+    xPercent < 0 ||
+    xPercent > 100 ||
+    yPercent < 0 ||
+    yPercent > 100
+  ) {
+    throw Object.assign(
+      new Error('Fields "xPercent" and "yPercent" must be numbers between 0 and 100.'),
+      { status: 400 }
+    );
+  }
+
+  const label = sanitizeHighlightLabel(body.label || '');
+  const rawStep = body.stepNumber;
+  const stepNumber =
+    Number.isInteger(Number(rawStep)) && Number(rawStep) >= 1 && Number(rawStep) <= 99
+      ? Number(rawStep)
+      : 0;
+
+  const rawDuration = Number(body.durationMs);
+  const durationMs = Number.isFinite(rawDuration)
+    ? Math.min(HIGHLIGHT_MAX_DURATION_MS, Math.max(HIGHLIGHT_MIN_DURATION_MS, Math.round(rawDuration)))
+    : HIGHLIGHT_DEFAULT_DURATION_MS;
+
+  if (process.platform !== 'win32') {
+    return {
+      ok: true,
+      available: false,
+      shown: false,
+      xPercent,
+      yPercent,
+      label,
+      stepNumber: stepNumber || null,
+      durationMs,
+    };
+  }
+
+  cancelActiveHighlight();
+
+  const child = spawn(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-STA',
+      '-WindowStyle',
+      'Hidden',
+      '-EncodedCommand',
+      HIGHLIGHT_PS_B64,
+    ],
+    {
+      shell: false,
+      windowsHide: true,
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        OPENSTUDY_HALO_X: String(xPercent),
+        OPENSTUDY_HALO_Y: String(yPercent),
+        OPENSTUDY_HALO_LABEL: label,
+        OPENSTUDY_HALO_STEP: String(stepNumber),
+        OPENSTUDY_HALO_DURATION: String(durationMs),
+      },
+    }
+  );
+
+  activeHighlightProcess = child;
+
+  child.on('exit', () => {
+    if (activeHighlightProcess === child) {
+      activeHighlightProcess = null;
+    }
+    if (activeHighlightSafetyTimer) {
+      clearTimeout(activeHighlightSafetyTimer);
+      activeHighlightSafetyTimer = null;
+    }
+  });
+
+  child.on('error', () => {
+    if (activeHighlightProcess === child) {
+      activeHighlightProcess = null;
+    }
+  });
+
+  activeHighlightSafetyTimer = setTimeout(() => {
+    if (activeHighlightProcess === child) {
+      cancelActiveHighlight();
+    }
+  }, durationMs + 4_000);
+  activeHighlightSafetyTimer.unref();
+
+  child.unref();
+
+  return {
+    ok: true,
+    available: true,
+    shown: true,
+    xPercent,
+    yPercent,
+    label,
+    stepNumber: stepNumber || null,
+    durationMs,
+  };
+}
+
 async function handleRequest(req, res) {
   if (!applyCorsHeaders(req, res)) {
     sendJson(res, 403, {
       ok: false,
-      error: 'Origin not allowed. The OpenStudy bridge accepts localhost origins only.',
+      error: 'Origin not allowed. The OpenStudy bridge accepts only local and sanctioned OpenStudy origins.',
     });
     return;
   }
@@ -774,7 +1958,7 @@ async function handleRequest(req, res) {
 
   const pathname = parsedUrl.pathname;
 
-  if (req.method === 'GET' && pathname === '/api/health') {
+  if (req.method === 'GET' && (pathname === '/api/health' || pathname === '/health')) {
     const { tools, details } = detectAvailableTools();
     sendJson(res, 200, {
       online: true,
@@ -784,18 +1968,29 @@ async function handleRequest(req, res) {
       port: PORT,
       tools,
       details,
+      desktopHelperAvailable: process.platform === 'win32',
     });
     return;
   }
 
-  if (req.method === 'POST' && pathname === '/api/agent') {
+  if (req.method === 'GET' && pathname === '/api/tools') {
+    const { tools, details } = detectAvailableTools();
+    sendJson(res, 200, {
+      ok: true,
+      tools,
+      details,
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && (pathname === '/api/agent' || pathname === '/api/agent/run')) {
     try {
       const body = await readJsonBody(req);
       const toolId = normalizeToolId(body.tool);
       if (!toolId) {
         sendJson(res, 400, {
           ok: false,
-          error: 'Invalid "tool". Supported values: "antigravity", "claude", "codex".',
+          error: 'Invalid "tool". Supported values: "antigravity", "claude", "codex", "hermes".',
         });
         return;
       }
@@ -832,7 +2027,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (req.method === 'GET' && pathname === '/api/obsidian') {
+  if (req.method === 'GET' && (pathname === '/api/obsidian' || pathname === '/api/obsidian/notes')) {
     try {
       const dir = parsedUrl.searchParams.get('dir') || '';
       const result = await scanObsidianVault(dir);
@@ -841,6 +2036,218 @@ async function handleRequest(req, res) {
       sendJson(res, err.status || 500, {
         ok: false,
         error: err.message || 'Could not scan Obsidian directory.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/hermes/status') {
+    try {
+      const rawGatewayUrl = parsedUrl.searchParams.get('gatewayUrl') || DEFAULT_HERMES_GATEWAY_URL;
+      const checked = validateLoopbackGatewayUrl(rawGatewayUrl);
+      if (!checked.ok) {
+        sendJson(res, 400, { ok: false, error: checked.error });
+        return;
+      }
+
+      const cliAvailable = Boolean(findExecutableOnPath('hermes'));
+      const [probe, skills, memoryData] = await Promise.all([
+        probeHermesGateway(checked.url),
+        loadHermesSkills(),
+        loadHermesMemory(),
+      ]);
+
+      sendJson(res, 200, {
+        ok: true,
+        cliAvailable,
+        gatewayOnline: probe.online,
+        gatewayUrl: probe.gatewayUrl,
+        models: probe.models,
+        skillsDir: '~/.openstudy/hermes/skills',
+        skillsCount: skills.length,
+        memoryCount: memoryData.entries.length,
+        desktopHelperAvailable: process.platform === 'win32',
+      });
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not query Hermes status.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/hermes/chat') {
+    try {
+      const body = await readJsonBody(req, MAX_CHAT_BODY_BYTES);
+      const result = await proxyHermesChat(body);
+      sendJson(res, result.status, result.payload);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Hermes Gateway chat proxy failed.',
+      });
+    }
+    return;
+  }
+
+  if (pathname === '/api/hermes/skills') {
+    try {
+      if (req.method === 'GET') {
+        const skills = await loadHermesSkills();
+        sendJson(res, 200, {
+          ok: true,
+          count: skills.length,
+          skillsDir: '~/.openstudy/hermes/skills',
+          skills,
+        });
+        return;
+      }
+
+      if (req.method === 'POST') {
+        const body = await readJsonBody(req);
+        if (Array.isArray(body.skills)) {
+          const savedList = [];
+          for (const rawSkill of body.skills.slice(0, MAX_HERMES_SKILLS)) {
+            savedList.push(await saveHermesSkill(rawSkill));
+          }
+          const allSkills = await loadHermesSkills();
+          sendJson(res, 200, {
+            ok: true,
+            savedCount: savedList.length,
+            count: allSkills.length,
+            skillsDir: '~/.openstudy/hermes/skills',
+            skills: allSkills,
+          });
+          return;
+        }
+
+        const candidate = body.skill && typeof body.skill === 'object' ? body.skill : body;
+        const saved = await saveHermesSkill(candidate);
+        const allSkills = await loadHermesSkills();
+        sendJson(res, 200, {
+          ok: true,
+          skill: saved,
+          count: allSkills.length,
+          skillsDir: '~/.openstudy/hermes/skills',
+          skills: allSkills,
+        });
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        const name = parsedUrl.searchParams.get('name') || parsedUrl.searchParams.get('slug') || '';
+        const deleted = await deleteHermesSkill(name);
+        const allSkills = await loadHermesSkills();
+        sendJson(res, 200, {
+          ok: true,
+          deleted,
+          count: allSkills.length,
+          skillsDir: '~/.openstudy/hermes/skills',
+          skills: allSkills,
+        });
+        return;
+      }
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not update Hermes skills.',
+      });
+      return;
+    }
+  }
+
+  if (pathname === '/api/hermes/memory') {
+    try {
+      if (req.method === 'GET') {
+        const memoryData = await loadHermesMemory();
+        sendJson(res, 200, {
+          ok: true,
+          count: memoryData.entries.length,
+          entries: memoryData.entries,
+          memory: memoryData.entries,
+          updatedAt: memoryData.updatedAt,
+          storage: '~/.openstudy/hermes/memory.json',
+        });
+        return;
+      }
+
+      if (req.method === 'POST') {
+        const body = await readJsonBody(req);
+        let nextEntries;
+
+        if (Array.isArray(body.entries) || Array.isArray(body.memory)) {
+          nextEntries = Array.isArray(body.entries) ? body.entries : body.memory;
+        } else {
+          const single = sanitizeMemoryEntry(
+            body.entry && typeof body.entry === 'object' ? body.entry : body
+          );
+          if (!single) {
+            sendJson(res, 400, {
+              ok: false,
+              error: 'Provide either an "entries" array or a non-empty "fact" entry.',
+            });
+            return;
+          }
+          const current = await loadHermesMemory();
+          nextEntries = [single, ...current.entries];
+        }
+
+        const saved = await saveHermesMemory(nextEntries);
+        sendJson(res, 200, {
+          ok: true,
+          count: saved.entries.length,
+          entries: saved.entries,
+          memory: saved.entries,
+          updatedAt: saved.updatedAt,
+          storage: '~/.openstudy/hermes/memory.json',
+        });
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        const id = (parsedUrl.searchParams.get('id') || '').trim();
+        if (!id) {
+          sendJson(res, 400, { ok: false, error: 'Query parameter "id" is required.' });
+          return;
+        }
+        const current = await loadHermesMemory();
+        const filtered = current.entries.filter((entry) => entry.id !== id);
+        const saved = await saveHermesMemory(filtered);
+        sendJson(res, 200, {
+          ok: true,
+          count: saved.entries.length,
+          entries: saved.entries,
+          memory: saved.entries,
+          updatedAt: saved.updatedAt,
+          storage: '~/.openstudy/hermes/memory.json',
+        });
+        return;
+      }
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not update Hermes memory.',
+      });
+      return;
+    }
+  }
+
+  if (req.method === 'GET' && pathname === '/api/desktop/active-window') {
+    const result = await getActiveDesktopWindow();
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/desktop/highlight') {
+    try {
+      const body = await readJsonBody(req);
+      const result = showDesktopHighlight(body);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not render desktop teacher highlight.',
       });
     }
     return;
@@ -937,6 +2344,7 @@ server.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
+  cancelActiveHighlight();
   server.close(() => {
     process.exit(0);
   });

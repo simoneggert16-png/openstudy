@@ -294,6 +294,9 @@ export function createDemoState(): OpenStudyState {
       anthropicApiKey: '',
       anthropicModel: 'claude-sonnet-4-5',
       notionToken: '',
+      hermesGatewayUrl: 'http://127.0.0.1:9119',
+      hermesModel: 'hermes-default',
+      hermesApiKey: '',
     },
     voice: {
       voiceName: 'Kore',
@@ -305,5 +308,77 @@ export function createDemoState(): OpenStudyState {
       mode: 'explain',
       stance: 'coach',
     },
+    hermesMemory: [
+      {
+        id: 'mem-1',
+        fact: 'Bevorzugt ruhige Schritt-für-Schritt-Erklärungen mit konkretem Beispiel vor der Regel.',
+        category: 'preference',
+        createdAt: '2026-11-22',
+        source: 'agent',
+      },
+      {
+        id: 'mem-2',
+        fact: 'Bei English Conditionals Type 2/3 darauf achten, kein "would" im if-Satz zu verwenden.',
+        category: 'weakness',
+        createdAt: '2026-11-22',
+        source: 'agent',
+      },
+    ],
+    hermesSkills: [
+      {
+        id: 'skill-screen-teacher',
+        name: 'screen-teacher',
+        description: 'Live-Bildschirm-Lehrer für andere Apps (Excel, Word, Code, PDF, Browser)',
+        trigger: 'Wenn ein Bildschirm oder eine andere App geteilt wird und der Lernende fragt, wie etwas geht.',
+        instructions:
+          'Analysiere genau, was auf dem aktuellen Bildschirm sichtbar ist. Nenne zuerst kurz, welche App oder Aufgabe du siehst. Erkläre Schritt für Schritt in klarem Deutsch (oder der eingestellten Lernsprache) und setze mit highlight_screen_region gezielte visuelle Marker (xPercent, yPercent, label), damit der Lernende genau sieht, wo er hinschauen oder klicken soll.',
+        enabled: true,
+        builtIn: true,
+        updatedAt: '2026-11-22',
+      },
+      {
+        id: 'skill-socratic-coach',
+        name: 'socratic-coach',
+        description: 'Sokratischer Coach — hilft beim Verstehen statt Lösungen vorzukauen',
+        trigger: 'Bei Verständnisfragen, Übungsaufgaben oder im Coach-Modus.',
+        instructions:
+          'Gib zuerst einen präzisen Hinweis oder eine gezielte Rückfrage, die den nächsten Denkschritt auslöst. Erst wenn der Lernende aktiv nach einer ausführlichen Erklärung fragt, schlüsselst du den gesamten Weg sauber auf.',
+        enabled: true,
+        builtIn: true,
+        updatedAt: '2026-11-22',
+      },
+      {
+        id: 'skill-note-card-builder',
+        name: 'note-card-builder',
+        description: 'Erstellt selbstständig Lernnotizen, Karteikarten und Tagesplan-Blöcke',
+        trigger: 'Wenn der Lernende Stoff sichern, zusammenfassen oder später wiederholen möchte.',
+        instructions:
+          'Nutze create_study_note für strukturierte Zusammenfassungen mit Merksatz-Callout, create_flashcards für 3–6 präzise Prüfungs-Karteikarten und add_daily_plan_tasks für realistische Wiederholungsblöcke.',
+        enabled: true,
+        builtIn: true,
+        updatedAt: '2026-11-22',
+      },
+      {
+        id: 'skill-exam-simulator',
+        name: 'exam-simulator',
+        description: 'Prüfungsnahe mündliche Simulation mit klarem Punkte-Feedback',
+        trigger: 'Im Prüfungsmodus oder bei Vorbereitung auf bevorstehende Tests.',
+        instructions:
+          'Stelle jeweils genau eine realistische Prüfungsfrage, warte die Antwort ab, gib eine ehrliche Einschätzung (z. B. 4/5 Punkten) und benenne 1–2 konkrete Punkte für volle Punktzahl.',
+        enabled: true,
+        builtIn: true,
+        updatedAt: '2026-11-22',
+      },
+    ],
+    hermesActionLog: [
+      {
+        id: 'act-1',
+        toolName: 'save_learning_memory',
+        summary: 'Lernpräferenz für Schritt-für-Schritt-Beispiele hinterlegt',
+        timestamp: '2026-11-22T09:20:00',
+        status: 'ok',
+      },
+    ],
+    screenSpotlights: [],
   };
 }

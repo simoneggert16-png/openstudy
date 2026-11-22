@@ -7,13 +7,11 @@
     <title>OpenStudy — Ruhiges Open-Source-Lernstudio</title>
     <meta
       name="description"
-      content="Freie Open-Source-Lernplattform mit eigenem Sprachtutor, strukturierten Notizen, lokalem Obsidian-Abgleich und Fokus-Planer. Sofort im Browser oder als Desktop-App."
+      content="Freie Open-Source-Lernplattform mit Hermes Bildschirm-Lehrer, eigenem Sprachtutor, strukturierten Notizen, lokalem Obsidian-Abgleich und Fokus-Planer. Sofort im Browser oder als Desktop-App."
     />
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'%3E%3Crect width='64' height='64' rx='15' fill='%23F6F1E7'/%3E%3Ccircle cx='32' cy='32' r='17' stroke='%230E4D48' stroke-width='4.2'/%3E%3Cpath d='M32 15 A17 17 0 0 1 49 32' stroke='%23D96B27' stroke-width='4.2' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='4.5' fill='%230E4D48'/%3E%3C/svg%3E"
-    />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -174,9 +172,10 @@
             </h1>
 
             <p class="hero-lead">
-              OpenStudy vereint mündliches Sprachtraining, strukturierte Lernnotizen, lokalen
-              Obsidian-Abgleich und Fokus-Blöcke in einer klaren Oberfläche. Sofort im Browser
-              startbar oder mit einem Klick als eigene Desktop-App eingerichtet.
+              OpenStudy vereint den Hermes Bildschirm-Lehrer, mündliches Sprachtraining,
+              strukturierte Lernnotizen, lokalen Obsidian-Abgleich und Fokus-Blöcke in einer
+              klaren Oberfläche. Sofort im Browser startbar oder mit einem Klick als eigene
+              Desktop-App eingerichtet.
             </p>
 
             <div class="hero-cta-row">
@@ -460,16 +459,44 @@
         <div class="container">
           <div class="section-header">
             <span class="section-label">Funktionen</span>
-            <h2 class="font-display">Vier Werkzeuge, die ruhig ineinandergreifen.</h2>
+            <h2 class="font-display">Fünf Werkzeuge, die ruhig ineinandergreifen.</h2>
             <p>
-              Statt zwischen fünf offenen Tabs zu wechseln, bleiben Lernstoff, Sprache, Notizen und
-              Zeitplanung an einem Ort — ohne monatliches Abo.
+              Statt zwischen fünf offenen Tabs zu wechseln, bleiben Bildschirm-Hilfe, Sprache,
+              Notizen und Zeitplanung an einem Ort — ohne monatliches Abo.
             </p>
           </div>
 
           <div class="feature-grid">
+            <article class="feature-col feature-col-wide">
+              <div class="feature-col-wide-body">
+                <span class="feature-num font-mono-num">01</span>
+                <h3>Hermes Bildschirm-Lehrer &amp; Schwebendes Lehrer-Fenster</h3>
+                <p>
+                  Erklärt dir Aufgaben live über andere Programme wie Excel, Word, OneNote oder
+                  Code hinweg. Hermes liest den geteilten Bildschirmausschnitt, setzt visuelle
+                  Marker auf relevante Stellen und baut mit der Zeit ein eigenes Lerngedächtnis auf.
+                </p>
+              </div>
+              <div class="feature-col-wide-list">
+                <ul class="feature-points">
+                  <li>
+                    Schwebendes Lehrer-Fenster bleibt über Excel, Word, OneNote oder deinem Editor
+                    im Vordergrund
+                  </li>
+                  <li>
+                    Setzt nummerierte visuelle Marker direkt auf Formeln, Textstellen oder
+                    Schaltflächen
+                  </li>
+                  <li>
+                    Arbeitet mit eigenen <span class="font-mono-num">SKILL.md</span>-Fähigkeiten,
+                    dauerhaftem Lerngedächtnis und optionalem Nous Research Hermes Gateway
+                  </li>
+                </ul>
+              </div>
+            </article>
+
             <article class="feature-col">
-              <span class="feature-num font-mono-num">01</span>
+              <span class="feature-num font-mono-num">02</span>
               <h3>Mündlicher Voice-Tutor</h3>
               <p>
                 Übe Prüfungsgespräche oder lasse dir schwierige Kapitel laut erklären — in deinem
@@ -483,7 +510,7 @@
             </article>
 
             <article class="feature-col">
-              <span class="feature-num font-mono-num">02</span>
+              <span class="feature-num font-mono-num">03</span>
               <h3>Notizen-Studio &amp; Obsidian</h3>
               <p>
                 Schreibe Lernzusammenfassungen direkt im eingebauten Block-Editor oder verbinde
@@ -497,21 +524,21 @@
             </article>
 
             <article class="feature-col">
-              <span class="feature-num font-mono-num">03</span>
+              <span class="feature-num font-mono-num">04</span>
               <h3>Freie Wahl des KI-Anbieters</h3>
               <p>
                 Du bestimmst, welches Modell antwortet — kostenlos über Google AI Studio, lokal mit
-                Ollama oder über eigene API-Schlüssel.
+                Ollama, über das Hermes Agent Gateway oder mit eigenen API-Schlüsseln.
               </p>
               <ul class="feature-points">
                 <li>Integrierter Free-Only-Schalter schützt vor ungewollten API-Kosten</li>
                 <li>Vollständig offline nutzbar über lokales Ollama (z. B. Gemma 3)</li>
-                <li>Optional koppelbar mit lokalen CLI-Agents wie Antigravity, Claude Code und Codex</li>
+                <li>Optional koppelbar mit Nous Research Hermes sowie Antigravity, Claude Code und Codex</li>
               </ul>
             </article>
 
             <article class="feature-col">
-              <span class="feature-num font-mono-num">04</span>
+              <span class="feature-num font-mono-num">05</span>
               <h3>Fokus-Planer &amp; Wiederholung</h3>
               <p>
                 Plane realistische Lerneinheiten statt endloser Listen. Der integrierte Coach fragt
@@ -557,7 +584,8 @@
               <p>
                 Klicke in Chrome oder Edge auf das kleine Install-Symbol rechts in der Adressleiste
                 (in Safari: Teilen → Zum Home-Bildschirm oder Zum Dock). OpenStudy öffnet sich
-                danach als eigene Desktop-App mit Icon — ohne .exe und ohne Browser-Warnung.
+                danach als eigene Desktop-App mit Icon — ohne Installationsdatei und ohne
+                Browser-Warnung.
               </p>
             </article>
 
@@ -599,16 +627,24 @@
                 type="button"
                 class="btn btn-secondary btn-lg"
                 id="section-pwa-install-btn"
-                hidden
               >
-                Jetzt direkt installieren
+                Als App installieren
               </button>
             </div>
 
-            <p class="install-browser-note">
-              Empfohlen für direkte Obsidian-Ordnerverbindung: Chrome, Edge oder Brave. Auch
-              kompatibel mit Safari und Firefox.
-            </p>
+            <div>
+              <p class="install-browser-note">
+                Empfohlen für direkte Obsidian-Ordnerverbindung: Chrome, Edge oder Brave. Auch
+                kompatibel mit Safari und Firefox.
+              </p>
+              <p
+                class="install-status-feedback"
+                id="install-status-feedback"
+                role="status"
+                aria-live="polite"
+                hidden
+              ></p>
+            </div>
           </div>
 
           <details class="dev-details">
@@ -743,6 +779,80 @@ npm run bridge</code></pre>
         </div>
         <div class="lightbox-img-wrap">
           <img id="lightbox-img" src="" alt="" />
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="install-modal"
+      id="install-guide-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="install-guide-title"
+      aria-hidden="true"
+    >
+      <div class="install-modal-dialog">
+        <div class="install-modal-header">
+          <h3 id="install-guide-title" class="font-display">Als App installieren</h3>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            id="install-guide-close"
+            aria-label="Installationshinweis schliessen"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="18" x2="6" y1="6" y2="18" />
+              <line x1="6" x2="18" y1="6" y2="18" />
+            </svg>
+            <span>Schliessen</span>
+          </button>
+        </div>
+        <div class="install-modal-body">
+          <p class="install-modal-browser" id="install-guide-browser">Chrome / Edge</p>
+          <p class="install-modal-text" id="install-guide-text">
+            Klicke rechts oben in der Adressleiste auf das Install-Symbol — oder im Browser-Menü
+            (⋮) auf «Streamen, speichern und teilen → Seite als App installieren».
+          </p>
+          <p class="install-modal-hint" id="install-guide-hint">
+            OpenStudy öffnet sich danach als eigenes Desktop-Fenster mit Icon. Du kannst die App
+            auch sofort direkt im Browser starten.
+          </p>
+        </div>
+        <div class="install-modal-footer">
+          <a
+            href="./app/?mode=demo&scheme=focus-cream"
+            class="btn btn-accent js-app-link"
+            id="install-guide-open-app"
+          >
+            <span>OpenStudy App öffnen</span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M7 17 17 7" />
+              <path d="M8 7h9v9" />
+            </svg>
+          </a>
+          <button type="button" class="btn btn-ghost" id="install-guide-dismiss">
+            Schliessen
+          </button>
         </div>
       </div>
     </div>
@@ -905,46 +1015,164 @@ npm run bridge</code></pre>
           }
         });
 
-        // Optional native PWA install hook when browser offers beforeinstallprompt
+        // Register root service worker so Chrome/Edge detects an installable PWA
+        if (
+          'serviceWorker' in navigator &&
+          (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+        ) {
+          window.addEventListener('load', function () {
+            navigator.serviceWorker.register('./sw.js').catch(function () {});
+          });
+        }
+
+        // Always-responsive PWA install flow (native prompt when ready, tailored modal fallback)
         var deferredInstallPrompt = null;
+        var isInstalledApp =
+          window.matchMedia('(display-mode: standalone)').matches ||
+          Boolean(window.navigator.standalone);
         var heroInstallBtn = document.getElementById('install-cta-btn');
         var sectionInstallBtn = document.getElementById('section-pwa-install-btn');
+        var installStatusEl = document.getElementById('install-status-feedback');
+
+        var installModal = document.getElementById('install-guide-modal');
+        var installModalBrowser = document.getElementById('install-guide-browser');
+        var installModalText = document.getElementById('install-guide-text');
+        var installModalHint = document.getElementById('install-guide-hint');
+        var installModalClose = document.getElementById('install-guide-close');
+        var installModalDismiss = document.getElementById('install-guide-dismiss');
+        var lastInstallTrigger = null;
+
+        function showInstallStatus(message) {
+          if (!installStatusEl) return;
+          installStatusEl.textContent = message;
+          installStatusEl.hidden = false;
+        }
+
+        function detectInstallGuide() {
+          if (isInstalledApp) {
+            return {
+              browser: 'Bereits eingerichtet',
+              text: 'OpenStudy ist auf diesem Gerät bereits als App eingerichtet. Du kannst sie direkt über das Startmenü, das Dock oder den Button unten öffnen.',
+              hint: 'Alle Lerndaten, Notizen und Einstellungen werden automatisch lokal synchron gehalten.',
+            };
+          }
+          var ua = window.navigator.userAgent || '';
+          var isSafari =
+            /safari/i.test(ua) && !/chrome|chromium|crios|edg|opr|brave|fxios/i.test(ua);
+          var isFirefox = /firefox|fxios/i.test(ua);
+
+          if (isSafari) {
+            return {
+              browser: 'Safari',
+              text: 'Tippe oder klicke auf «Teilen» und wähle «Zum Dock hinzufügen» (macOS) oder «Zum Home-Bildschirm hinzufügen» (iPad / iPhone).',
+              hint: 'Danach startet OpenStudy als eigene App ohne Browser-Leisten — oder du öffnest die Web-App direkt unten.',
+            };
+          }
+          if (isFirefox) {
+            return {
+              browser: 'Firefox',
+              text: 'Firefox unterstützt auf dem Desktop noch keine direkte Web-App-Installation. Starte OpenStudy einfach direkt im Browser oder öffne die Seite kurz in Chrome oder Edge, um ein eigenes Desktop-Fenster anzulegen.',
+              hint: 'Für die direkte Ordnerverbindung mit lokalem Obsidian empfehlen wir Chrome, Edge oder Brave.',
+            };
+          }
+          return {
+            browser: 'Chrome / Edge',
+            text: 'Klicke rechts oben in der Adressleiste auf das Install-Symbol — oder im Browser-Menü (⋮) auf «Streamen, speichern und teilen → Seite als App installieren».',
+            hint: 'Falls OpenStudy bereits installiert ist, findest du die App direkt im Startmenü oder Dock. Alternativ kannst du sofort im Browser starten.',
+          };
+        }
+
+        function openInstallModal(triggerEl) {
+          if (!installModal) return;
+          var guide = detectInstallGuide();
+          if (installModalBrowser) installModalBrowser.textContent = guide.browser;
+          if (installModalText) installModalText.textContent = guide.text;
+          if (installModalHint) installModalHint.textContent = guide.hint;
+          lastInstallTrigger = triggerEl || null;
+          installModal.classList.add('is-open');
+          installModal.setAttribute('aria-hidden', 'false');
+          document.body.style.overflow = 'hidden';
+          if (installModalClose) installModalClose.focus();
+        }
+
+        function closeInstallModal() {
+          if (!installModal) return;
+          installModal.classList.remove('is-open');
+          installModal.setAttribute('aria-hidden', 'true');
+          document.body.style.overflow = '';
+          if (lastInstallTrigger && typeof lastInstallTrigger.focus === 'function') {
+            lastInstallTrigger.focus();
+          }
+        }
 
         window.addEventListener('beforeinstallprompt', function (event) {
           event.preventDefault();
           deferredInstallPrompt = event;
-          if (sectionInstallBtn) sectionInstallBtn.hidden = false;
+          if (sectionInstallBtn) {
+            sectionInstallBtn.textContent = 'Jetzt direkt installieren';
+          }
         });
 
         window.addEventListener('appinstalled', function () {
+          isInstalledApp = true;
           deferredInstallPrompt = null;
-          if (sectionInstallBtn) sectionInstallBtn.hidden = true;
+          if (sectionInstallBtn) {
+            sectionInstallBtn.textContent = 'Als App installiert';
+          }
+          showInstallStatus('OpenStudy wurde erfolgreich als Desktop-App eingerichtet.');
         });
 
-        function triggerNativeInstall() {
-          if (!deferredInstallPrompt) return false;
-          var promptEvent = deferredInstallPrompt;
-          deferredInstallPrompt = null;
-          promptEvent.prompt();
-          if (promptEvent.userChoice && promptEvent.userChoice.then) {
-            promptEvent.userChoice.then(function () {
-              if (sectionInstallBtn) sectionInstallBtn.hidden = true;
-            });
+        function handleInstallClick(event, triggerEl) {
+          event.preventDefault();
+          if (deferredInstallPrompt) {
+            var promptEvent = deferredInstallPrompt;
+            deferredInstallPrompt = null;
+            promptEvent.prompt();
+            if (promptEvent.userChoice && promptEvent.userChoice.then) {
+              promptEvent.userChoice
+                .then(function (choice) {
+                  if (choice && choice.outcome === 'accepted') {
+                    isInstalledApp = true;
+                    if (sectionInstallBtn) {
+                      sectionInstallBtn.textContent = 'Als App installiert';
+                    }
+                    showInstallStatus('OpenStudy wurde erfolgreich als Desktop-App eingerichtet.');
+                  } else {
+                    if (sectionInstallBtn) {
+                      sectionInstallBtn.textContent = 'Als App installieren';
+                    }
+                  }
+                })
+                .catch(function () {});
+            }
+            return;
           }
-          return true;
+          openInstallModal(triggerEl);
         }
 
         if (heroInstallBtn) {
           heroInstallBtn.addEventListener('click', function (event) {
-            if (triggerNativeInstall()) {
-              event.preventDefault();
-            }
+            handleInstallClick(event, heroInstallBtn);
           });
         }
 
         if (sectionInstallBtn) {
-          sectionInstallBtn.addEventListener('click', function () {
-            triggerNativeInstall();
+          sectionInstallBtn.addEventListener('click', function (event) {
+            handleInstallClick(event, sectionInstallBtn);
+          });
+        }
+
+        if (installModalClose) {
+          installModalClose.addEventListener('click', closeInstallModal);
+        }
+
+        if (installModalDismiss) {
+          installModalDismiss.addEventListener('click', closeInstallModal);
+        }
+
+        if (installModal) {
+          installModal.addEventListener('click', function (event) {
+            if (event.target === installModal) closeInstallModal();
           });
         }
 
@@ -994,11 +1222,12 @@ npm run bridge</code></pre>
         }
 
         document.addEventListener('keydown', function (event) {
-          if (
-            event.key === 'Escape' &&
-            lightbox &&
-            lightbox.classList.contains('is-open')
-          ) {
+          if (event.key !== 'Escape') return;
+          if (installModal && installModal.classList.contains('is-open')) {
+            closeInstallModal();
+            return;
+          }
+          if (lightbox && lightbox.classList.contains('is-open')) {
             closeLightbox();
           }
         });

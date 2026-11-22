@@ -227,6 +227,168 @@ export async function generateStudyText(params: {
       throw new Error(`Gemini Modell nicht erreichbar: ${formatErrorMessage(lastError)}`);
     }
 
+    case 'hermes-gateway': {
+      const bridgeBase = (provider.bridgeUrl?.trim() || 'http://127.0.0.1:4319').replace(/\/+$/, '');
+      const gatewayBase = (provider.hermesGatewayUrl?.trim() || 'http://127.0.0.1:9119').replace(/\/+$/, '');
+      const model = provider.hermesModel?.trim() || 'hermes-default';
+      const apiKey = provider.hermesApiKey?.trim() || '';
+
+      const bridgeIsLocal = isLocalhostEndpoint(bridgeBase);
+      const gatewayIsLocal = isLocalhostEndpoint(gatewayBase);
+
+      if (provider.freeOnlyLock && !bridgeIsLocal && !gatewayIsLocal) {
+        throw new Error(
+          'Kostenlos-Sperre aktiv: Im Modus "Nur Kostenlos" ist Hermes Gateway nur lokal (127.0.0.1 / localhost) erlaubt. Du kannst die Sperre in den Einstellungen aufheben.'
+        );
+      }
+
+      const extractGatewayText = (payload: {
+        text?: string;
+        reply?: string;
+        output?: string;
+        message?: { content?: string };
+        choices?: Array<{
+          message?: {
+            content?: string | Array<{ type?: string; text?: string }>;
+          };
+        }>;
+      }): string => {
+        if (typeof payload.text === 'string' && payload.text.trim()) return payload.text.trim();
+        if (typeof payload.reply === 'string' && payload.reply.trim()) return payload.reply.trim();
+        if (typeof payload.output === 'string' && payload.output.trim()) return payload.output.trim();
+        if (typeof payload.message?.content === 'string' && payload.message.content.trim()) {
+          return payload.message.content.trim();
+        }
+        const rawContent = payload.choices?.[0]?.message?.content;
+        if (Array.isArray(rawContent)) {
+          return rawContent
+            .map((part) => (typeof part.text === 'string' ? part.text : ''))
+            .join('')
+            .trim();
+        }
+        return (rawContent ?? '').trim();
+      };
+
+      // 1. Prefer the local OpenStudy Bridge proxy if allowed
+      let bridgeError: string | null = null;
+      if (!provider.freeOnlyLock || bridgeIsLocal) {
+        try {
+          const bridgeRes = await fetch(`${bridgeBase}/api/hermes/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              gatewayUrl: gatewayBase,
+              model,
+              apiKey: apiKey || undefined,
+              systemPrompt,
+              userPrompt,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt },
+              ],
+            }),
+          });
+
+          if (bridgeRes.ok) {
+            const data = (await bridgeRes.json().catch(() => ({}))) as {
+              text?: string;
+              reply?: string;
+              output?: string;
+              model?: string;
+              message?: { content?: string };
+              choices?: Array<{
+                message?: {
+                  content?: string | Array<{ type?: string; text?: string }>;
+                };
+              }>;
+              error?: string;
+            };
+            if (!data.error) {
+              const text = extractGatewayText(data);
+              if (text) {
+                return {
+                  text,
+                  usedProvider: `Hermes Gateway (${data.model || model})`,
+                };
+              }
+            } else {
+              bridgeError = data.error;
+            }
+          } else if (bridgeRes.status !== 404) {
+            const errData = (await bridgeRes.json().catch(() => ({}))) as { error?: string };
+            bridgeError = errData.error || `Bridge Status ${bridgeRes.status}`;
+          }
+        } catch {
+          // Bridge not running — fall back to direct Hermes Gateway
+        }
+      }
+
+      // 2. Fallback to direct OpenAI-compatible Hermes Gateway endpoint
+      if (provider.freeOnlyLock && !gatewayIsLocal) {
+        throw new Error(
+          bridgeError ||
+            'Kostenlos-Sperre aktiv: Direkter Zugriff auf ein externes Hermes Gateway ist gesperrt. Nutze eine lokale Adresse (127.0.0.1 / localhost) oder deaktiviere die Sperre.'
+        );
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Title': 'OpenStudy',
+      };
+      if (apiKey) {
+        headers.Authorization = `Bearer ${apiKey}`;
+      }
+
+      let directRes: Response;
+      try {
+        directRes = await fetch(`${gatewayBase}/v1/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+          }),
+        });
+      } catch {
+        throw new Error(
+          bridgeError ||
+            `Hermes Gateway ist weder über die lokale Bridge (${bridgeBase}) noch direkt unter ${gatewayBase} erreichbar. Starte Hermes lokal oder wechsle auf Gemini Free.`
+        );
+      }
+
+      const directData = (await directRes.json().catch(() => ({}))) as {
+        choices?: Array<{
+          message?: {
+            content?: string | Array<{ type?: string; text?: string }>;
+          };
+        }>;
+        text?: string;
+        reply?: string;
+        error?: { message?: string } | string;
+      };
+
+      if (!directRes.ok) {
+        const detail =
+          typeof directData.error === 'string'
+            ? directData.error
+            : directData.error?.message || `HTTP ${directRes.status}`;
+        throw new Error(`Hermes Gateway Fehler: ${detail}`);
+      }
+
+      const text = extractGatewayText(directData);
+      if (!text) {
+        throw new Error('Hermes Gateway hat keine verwertbare Antwort zurückgegeben.');
+      }
+
+      return {
+        text,
+        usedProvider: `Hermes Gateway (${model})`,
+      };
+    }
+
     case 'ollama': {
       const baseUrl = (provider.ollamaUrl.trim() || 'http://127.0.0.1:11434').replace(/\/+$/, '');
       const model = provider.ollamaModel.trim() || 'gemma3:4b';
@@ -477,6 +639,8 @@ export async function generateStudyText(params: {
   }
 }
 
+export const generateStudyReply = generateStudyText;
+
 export async function testGeminiApiKey(
   apiKey: string
 ): Promise<{ ok: boolean; message: string }> {
@@ -577,4 +741,130 @@ export async function checkLocalBridge(
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+async function probeUrlOk(url: string, timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+export async function checkHermesGateway(
+  bridgeUrl: string,
+  hermesGatewayUrl: string
+): Promise<{
+  online: boolean;
+  mode: 'gateway' | 'cli' | 'builtin';
+  message: string;
+  skillsCount: number;
+}> {
+  const bridgeBase = (bridgeUrl.trim() || 'http://127.0.0.1:4319').replace(/\/+$/, '');
+  const gatewayBase = (hermesGatewayUrl.trim() || 'http://127.0.0.1:9119').replace(/\/+$/, '');
+
+  let bridgeSkillsCount = 0;
+  let bridgeMessage = '';
+
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 2500);
+
+  try {
+    const query = `?gatewayUrl=${encodeURIComponent(gatewayBase)}`;
+    const res = await fetch(`${bridgeBase}/api/hermes/status${query}`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    if (res.ok) {
+      const data = (await res.json().catch(() => ({}))) as {
+        online?: boolean;
+        ok?: boolean;
+        gatewayOnline?: boolean;
+        cliAvailable?: boolean;
+        mode?: string;
+        message?: string;
+        skillsCount?: number;
+        skills?: unknown[];
+      };
+
+      bridgeSkillsCount =
+        typeof data.skillsCount === 'number'
+          ? data.skillsCount
+          : Array.isArray(data.skills)
+            ? data.skills.length
+            : 0;
+
+      const resolvedMode: 'gateway' | 'cli' | 'builtin' =
+        data.mode === 'gateway' || data.mode === 'cli' || data.mode === 'builtin'
+          ? data.mode
+          : data.gatewayOnline
+            ? 'gateway'
+            : data.cliAvailable
+              ? 'cli'
+              : 'builtin';
+
+      const isOnline =
+        typeof data.online === 'boolean'
+          ? data.online
+          : Boolean(data.gatewayOnline || data.cliAvailable);
+
+      bridgeMessage = typeof data.message === 'string' ? data.message.trim() : '';
+
+      if (isOnline && resolvedMode !== 'builtin') {
+        return {
+          online: true,
+          mode: resolvedMode,
+          message:
+            bridgeMessage ||
+            (resolvedMode === 'gateway'
+              ? `Hermes Gateway verbunden (${gatewayBase}).`
+              : 'Lokale Hermes CLI über OpenStudy Bridge bereit.'),
+          skillsCount: bridgeSkillsCount,
+        };
+      }
+    }
+  } catch {
+    // Bridge offline or route not available — probe gateway directly
+  } finally {
+    window.clearTimeout(timer);
+  }
+
+  // Direct fallback probe to Hermes Gateway (/health then /v1/models)
+  const healthOk = await probeUrlOk(`${gatewayBase}/health`, 2000);
+  if (healthOk) {
+    return {
+      online: true,
+      mode: 'gateway',
+      message: `Hermes Gateway direkt unter ${gatewayBase} erreichbar.`,
+      skillsCount: bridgeSkillsCount,
+    };
+  }
+
+  const modelsOk = await probeUrlOk(`${gatewayBase}/v1/models`, 2000);
+  if (modelsOk) {
+    return {
+      online: true,
+      mode: 'gateway',
+      message: `Hermes Gateway direkt unter ${gatewayBase} erreichbar.`,
+      skillsCount: bridgeSkillsCount,
+    };
+  }
+
+  return {
+    online: false,
+    mode: 'builtin',
+    message:
+      bridgeMessage ||
+      'Kein lokales Hermes Gateway erkannt. Der integrierte Hermes-Agent bleibt mit Gemini Free vollständig nutzbar.',
+    skillsCount: bridgeSkillsCount,
+  };
 }

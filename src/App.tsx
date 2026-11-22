@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Menu,
   Mic,
+  MonitorPlay,
   Settings,
   X,
 } from 'lucide-react';
@@ -17,6 +18,7 @@ import { useOpenStudyStore } from './hooks/useOpenStudyStore';
 import { usePwaInstall } from './hooks/usePwaInstall';
 import { ColorSchemeId, MainView, StudyLanguage, TutorMode } from './types';
 import { HomeDashboard } from './components/HomeDashboard';
+import { HermesScreenTeacherView } from './components/HermesScreenTeacherView';
 import { NotionWorkspace } from './components/NotionWorkspace';
 import { StudyTrainerView } from './components/StudyTrainerView';
 import { LanguageGrammarLab } from './components/LanguageGrammarLab';
@@ -24,7 +26,7 @@ import { FocusPlannerView } from './components/FocusPlannerView';
 import { ObsidianAndImportHub } from './components/ObsidianAndImportHub';
 import { VoiceTutorDrawer } from './components/VoiceTutorDrawer';
 import { OnboardingWizard } from './components/OnboardingWizard';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsModal, SettingsTab } from './components/SettingsModal';
 import { LiveConnectionState } from './services/voiceEngine';
 
 const NAV_ITEMS: {
@@ -33,6 +35,7 @@ const NAV_ITEMS: {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
 }[] = [
   { id: 'home', label: 'Übersicht', icon: LayoutDashboard },
+  { id: 'teacher', label: 'Hermes Lehrer', icon: MonitorPlay },
   { id: 'notes', label: 'Notizen', icon: BookOpen },
   { id: 'trainer', label: 'Karten & Quiz', icon: GraduationCap },
   { id: 'languages', label: 'Sprachen', icon: Globe },
@@ -42,12 +45,19 @@ const NAV_ITEMS: {
 
 const VIEW_LABELS: Record<MainView, string> = {
   home: 'Übersicht',
+  teacher: 'Hermes Bildschirm-Lehrer',
   notes: 'Notizen',
   trainer: 'Karten & Quiz',
   languages: 'Sprachen & Grammatik',
   focus: 'Fokus & Planer',
   import: 'Import & Sync',
 };
+
+function isSafariBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /safari/i.test(ua) && !/chrome|chromium|crios|edg|opr|brave|fxios/i.test(ua);
+}
 
 function FocusMark() {
   return (
@@ -100,6 +110,13 @@ export default function App() {
     setObsidianNotes,
     toggleObsidianContext,
     addSchoolScheduleItems,
+    addHermesMemory,
+    removeHermesMemory,
+    upsertHermesSkill,
+    toggleHermesSkill,
+    logHermesAction,
+    addScreenSpotlight,
+    clearScreenSpotlights,
     resetToDemo,
   } = useOpenStudyStore();
 
@@ -109,9 +126,27 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('appearance');
+  const [installTipOpen, setInstallTipOpen] = useState(false);
   const [forceOnboarding, setForceOnboarding] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveConnectionState>('idle');
   const [hoveredSchemeId, setHoveredSchemeId] = useState<ColorSchemeId | null>(null);
+
+  const openSettings = (tab: SettingsTab = 'appearance') => {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+    setInstallTipOpen(false);
+    setMobileMenuOpen(false);
+  };
+
+  const handleSidebarInstallClick = () => {
+    if (canInstall) {
+      setInstallTipOpen(false);
+      void promptInstall();
+      return;
+    }
+    setInstallTipOpen((open) => !open);
+  };
 
   const activeCourse = useMemo(
     () => state.courses.find((c) => c.id === state.activeCourseId) ?? state.courses[0],
@@ -354,33 +389,68 @@ export default function App() {
         </button>
 
         {/* Quiet Action Row */}
-        <div className="space-y-0.5">
-          <button
-            type="button"
-            onClick={() => {
-              setSettingsOpen(true);
-              setMobileMenuOpen(false);
-            }}
-            className="w-full h-8 px-2 rounded-lg flex items-center gap-2 text-[13px] cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/55"
-            style={{ color: 'var(--text-secondary)' }}
-          >
-            <Settings size={14} strokeWidth={1.5} />
-            <span>Einstellungen</span>
-          </button>
+        <div className="space-y-1.5">
+          {!isInstalled && installTipOpen && (
+            <div
+              role="status"
+              className="rounded-[10px] px-3 py-2.5 text-[12px] leading-relaxed"
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-strong)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p style={{ color: 'var(--text-primary)' }}>
+                  {isSafariBrowser()
+                    ? 'In Safari auf «Teilen» tippen und «Zum Dock» oder «Zum Home-Bildschirm» wählen.'
+                    : 'Klicke rechts in der Adressleiste auf das Install-Symbol — oder im Menü (⋮) auf «Seite als App installieren».'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setInstallTipOpen(false)}
+                  aria-label="Hinweis schliessen"
+                  className="shrink-0 p-0.5 cursor-pointer"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  <X size={13} strokeWidth={1.5} />
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => openSettings('data')}
+                className="mt-1.5 text-[11.5px] font-medium cursor-pointer hover:underline"
+                style={{ color: 'var(--accent)' }}
+              >
+                Mehr unter Daten &amp; App
+              </button>
+            </div>
+          )}
 
-          {canInstall && (
+          <div className="space-y-0.5">
             <button
               type="button"
-              onClick={() => {
-                void promptInstall();
-              }}
+              onClick={() => openSettings('appearance')}
               className="w-full h-8 px-2 rounded-lg flex items-center gap-2 text-[13px] cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/55"
-              style={{ color: 'var(--accent)' }}
+              style={{ color: 'var(--text-secondary)' }}
             >
-              <Download size={14} strokeWidth={1.5} />
-              <span>Als App installieren</span>
+              <Settings size={14} strokeWidth={1.5} />
+              <span>Einstellungen</span>
             </button>
-          )}
+
+            {!isInstalled && (
+              <button
+                type="button"
+                onClick={handleSidebarInstallClick}
+                aria-expanded={!canInstall ? installTipOpen : undefined}
+                className="w-full h-8 px-2 rounded-lg flex items-center gap-2 text-[13px] cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/55"
+                style={{ color: 'var(--accent)' }}
+              >
+                <Download size={14} strokeWidth={1.5} />
+                <span>Als App installieren</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -453,7 +523,7 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => openSettings('appearance')}
               className="btn-ghost p-1.5"
               aria-label="Einstellungen"
             >
@@ -493,7 +563,27 @@ export default function App() {
               onSetObjectiveMastery={setObjectiveMastery}
               onOpenVoiceTutor={openVoiceTutor}
               onOpenOnboarding={() => setForceOnboarding(true)}
-              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenSettings={() => openSettings('appearance')}
+            />
+          )}
+          {view === 'teacher' && (
+            <HermesScreenTeacherView
+              state={state}
+              onSelectCourse={setActiveCourse}
+              onUpdateVoice={updateVoice}
+              onUpsertNote={upsertNote}
+              onAddCards={addCards}
+              onAddPlanTasks={addPlanTasks}
+              onNavigate={navigate}
+              onAddHermesMemory={addHermesMemory}
+              onRemoveHermesMemory={removeHermesMemory}
+              onUpsertHermesSkill={upsertHermesSkill}
+              onToggleHermesSkill={toggleHermesSkill}
+              onLogHermesAction={logHermesAction}
+              onAddScreenSpotlight={addScreenSpotlight}
+              onClearScreenSpotlights={clearScreenSpotlights}
+              onOpenSettings={() => openSettings('ai')}
+              onOpenOnboarding={() => setForceOnboarding(true)}
             />
           )}
           {view === 'notes' && (
@@ -514,7 +604,7 @@ export default function App() {
               onAddCards={addCards}
               onAddPlanTasks={addPlanTasks}
               onUpdateVoice={updateVoice}
-              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenSettings={() => openSettings('ai')}
             />
           )}
           {view === 'languages' && (
@@ -555,13 +645,14 @@ export default function App() {
         currentViewLabel={currentViewLabel}
         onUpdateVoice={updateVoice}
         onUpdateProvider={updateProvider}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => openSettings('ai')}
         onConnectionStateChange={setLiveStatus}
       />
 
       {/* Settings Modal */}
       <SettingsModal
         open={settingsOpen}
+        initialTab={settingsTab}
         onClose={() => setSettingsOpen(false)}
         state={state}
         onUpdateProvider={updateProvider}
@@ -588,7 +679,7 @@ export default function App() {
         }}
         onOpenSettings={() => {
           setForceOnboarding(false);
-          setSettingsOpen(true);
+          openSettings('ai');
         }}
       />
     </div>

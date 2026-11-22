@@ -1,5 +1,6 @@
 export type MainView =
   | 'home'
+  | 'teacher'
   | 'notes'
   | 'trainer'
   | 'languages'
@@ -21,6 +22,7 @@ export type StudyLanguage = 'de' | 'en' | 'fr' | 'es' | 'it';
 
 export type ProviderKind =
   | 'gemini-free'
+  | 'hermes-gateway'
   | 'ollama'
   | 'cli-bridge'
   | 'openai-compatible'
@@ -125,6 +127,45 @@ export interface ProviderConfig {
   anthropicApiKey: string;
   anthropicModel: string;
   notionToken: string;
+  hermesGatewayUrl: string;
+  hermesModel: string;
+  hermesApiKey: string;
+}
+
+export interface HermesMemoryEntry {
+  id: string;
+  fact: string;
+  category: 'preference' | 'strength' | 'weakness' | 'goal' | 'workflow';
+  createdAt: string;
+  source: 'agent' | 'user';
+}
+
+export interface HermesSkill {
+  id: string;
+  name: string;
+  description: string;
+  trigger: string;
+  instructions: string;
+  enabled: boolean;
+  builtIn?: boolean;
+  updatedAt: string;
+}
+
+export interface HermesToolExecution {
+  id: string;
+  toolName: string;
+  summary: string;
+  timestamp: string;
+  status: 'ok' | 'error';
+}
+
+export interface ScreenSpotlight {
+  id: string;
+  xPercent: number;
+  yPercent: number;
+  label: string;
+  stepNumber: number;
+  createdAt: number;
 }
 
 export interface VoicePreferences {
@@ -163,4 +204,8 @@ export interface OpenStudyState {
   schoolSchedule: SchoolScheduleItem[];
   provider: ProviderConfig;
   voice: VoicePreferences;
+  hermesMemory: HermesMemoryEntry[];
+  hermesSkills: HermesSkill[];
+  hermesActionLog: HermesToolExecution[];
+  screenSpotlights: ScreenSpotlight[];
 }

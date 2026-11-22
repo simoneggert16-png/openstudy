@@ -12,6 +12,7 @@ import {
   GraduationCap,
   MessageCircle,
   Mic,
+  MonitorPlay,
   Timer,
 } from 'lucide-react';
 import {
@@ -903,6 +904,42 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               className="mt-4 border-t"
               style={{ borderColor: 'var(--border-hairline)' }}
             >
+              <button
+                type="button"
+                onClick={() => onNavigate('teacher')}
+                className="w-full flex items-center justify-between gap-3 border-b py-3.5 px-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/35 group"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <MonitorPlay
+                    size={16}
+                    strokeWidth={1.5}
+                    className="mt-0.5 shrink-0"
+                    style={{ color: 'var(--accent-warm)' }}
+                  />
+                  <div className="min-w-0">
+                    <div
+                      className="text-[14px] font-medium"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      Bildschirm-Lehrer starten
+                    </div>
+                    <div
+                      className="text-[12.5px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      Erklärt dir live Aufgaben in anderen Apps — auch im schwebenden Fenster
+                    </div>
+                  </div>
+                </div>
+                <ArrowRight
+                  size={14}
+                  strokeWidth={1.5}
+                  className="shrink-0 transition-transform group-hover:translate-x-0.5"
+                  style={{ color: 'var(--text-muted)' }}
+                />
+              </button>
+
               <button
                 type="button"
                 onClick={() => onOpenVoiceTutor({ mode: 'explain' })}

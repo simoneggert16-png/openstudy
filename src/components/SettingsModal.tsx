@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { COLOR_SCHEMES } from '../data/colorSchemes';
 import {
+  checkHermesGateway,
   checkLocalBridge,
   FREE_GEMINI_TEXT_MODELS,
   FREE_LIVE_MODELS,
@@ -25,8 +26,11 @@ import {
   ProviderKind,
 } from '../types';
 
+export type SettingsTab = 'appearance' | 'ai' | 'data';
+
 export interface SettingsModalProps {
   open: boolean;
+  initialTab?: SettingsTab;
   onClose: () => void;
   state: OpenStudyState;
   onUpdateProvider: (patch: Partial<ProviderConfig>) => void;
@@ -39,12 +43,11 @@ export interface SettingsModalProps {
   onInstallPwa: () => Promise<boolean>;
 }
 
-type SettingsTab = 'appearance' | 'ai' | 'data';
-
 const DAILY_GOALS = [15, 30, 45, 60, 90] as const;
 
 const ADVANCED_PROVIDERS: Array<{ id: ProviderKind; label: string }> = [
   { id: 'gemini-free', label: 'Google Gemini' },
+  { id: 'hermes-gateway', label: 'Hermes Agent Gateway (Nous Research)' },
   { id: 'ollama', label: 'Ollama lokal' },
   { id: 'cli-bridge', label: 'CLI-Bridge' },
   { id: 'openai-compatible', label: 'OpenAI / OpenRouter' },
@@ -159,6 +162,7 @@ const StatusLine: React.FC<StatusLineProps> = ({ tone, message }) => (
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   open,
+  initialTab,
   onClose,
   state,
   onUpdateProvider,
@@ -170,13 +174,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isPwaInstalled,
   onInstallPwa,
 }) => {
-  const [tab, setTab] = useState<SettingsTab>('appearance');
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'appearance');
   const [advancedOpen, setAdvancedOpen] = useState(
     state.provider.activeTextProvider !== 'gemini-free'
   );
 
   const [testingGemini, setTestingGemini] = useState(false);
   const [geminiResult, setGeminiResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const [checkingHermes, setCheckingHermes] = useState(false);
+  const [hermesResult, setHermesResult] = useState<{
+    online: boolean;
+    mode: 'gateway' | 'cli' | 'builtin';
+    message: string;
+    skillsCount: number;
+  } | null>(null);
 
   const [checkingBridge, setCheckingBridge] = useState(false);
   const [bridgeResult, setBridgeResult] = useState<{ online: boolean; tools: string[] } | null>(null);
@@ -199,6 +211,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setConfirmReset(false);
       return;
     }
+    if (initialTab) {
+      setTab(initialTab);
+    }
     if (state.provider.activeTextProvider !== 'gemini-free') {
       setAdvancedOpen(true);
     }
@@ -207,7 +222,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose, state.provider.activeTextProvider]);
+  }, [open, initialTab, onClose, state.provider.activeTextProvider]);
 
   const storageSizeKb = useMemo(() => {
     try {
@@ -243,6 +258,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setBridgeResult(await checkLocalBridge(provider.bridgeUrl));
     } finally {
       setCheckingBridge(false);
+    }
+  };
+
+  const handleCheckHermes = async () => {
+    setCheckingHermes(true);
+    try {
+      setHermesResult(
+        await checkHermesGateway(provider.bridgeUrl, provider.hermesGatewayUrl)
+      );
+    } finally {
+      setCheckingHermes(false);
     }
   };
 
@@ -317,6 +343,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           customApiKey: '',
           anthropicApiKey: '',
           notionToken: '',
+          hermesApiKey: '',
         },
       },
     };
@@ -741,6 +768,95 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </p>
                   )}
 
+                  {provider.activeTextProvider === 'hermes-gateway' && (
+                    <div className="space-y-4">
+                      <p className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                        Verbindet OpenStudy mit deinem lokalen Nous Research Hermes Agent Gateway
+                        (<code className="font-mono-num">127.0.0.1:9119</code>) oder der{' '}
+                        <code className="font-mono-num">hermes</code>-CLI über die Companion-Bridge.
+                      </p>
+
+                      <label className="block">
+                        <span
+                          className="mb-1.5 block text-[12.5px] font-medium"
+                          style={{ color: 'var(--text-secondary)' }}
+                        >
+                          Hermes Gateway URL
+                        </span>
+                        <input
+                          type="text"
+                          value={provider.hermesGatewayUrl}
+                          onChange={(e) => {
+                            setHermesResult(null);
+                            onUpdateProvider({ hermesGatewayUrl: e.target.value });
+                          }}
+                          placeholder="http://127.0.0.1:9119"
+                          className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                          style={FIELD_STYLE}
+                        />
+                      </label>
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            Modell
+                          </span>
+                          <input
+                            type="text"
+                            value={provider.hermesModel}
+                            onChange={(e) => onUpdateProvider({ hermesModel: e.target.value })}
+                            placeholder="hermes-default"
+                            className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                            style={FIELD_STYLE}
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            API-Key (optional für localhost)
+                          </span>
+                          <SecretInput
+                            value={provider.hermesApiKey}
+                            onChange={(value) => onUpdateProvider({ hermesApiKey: value })}
+                            onEnter={() => void handleCheckHermes()}
+                            placeholder="Optionaler Schlüssel"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleCheckHermes()}
+                          disabled={checkingHermes}
+                          className="btn-secondary h-8 px-3 text-[12.5px]"
+                        >
+                          {checkingHermes && (
+                            <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
+                          )}
+                          <span>Hermes prüfen</span>
+                        </button>
+                      </div>
+
+                      {hermesResult && (
+                        <StatusLine
+                          tone={hermesResult.online ? 'positive' : 'warning'}
+                          message={
+                            hermesResult.skillsCount > 0
+                              ? `${hermesResult.message} (${hermesResult.skillsCount} Skills erkannt)`
+                              : hermesResult.message
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+
                   {provider.activeTextProvider === 'ollama' && (
                     <div className="space-y-4">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1135,8 +1251,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 ) : (
                   <p className="mt-1.5 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                    In Chrome oder Edge einfach rechts in der Adressleiste auf das
-                    App-Installieren-Symbol klicken — ganz ohne .exe-Download.
+                    Klicke in Chrome oder Edge rechts oben in der Adressleiste auf das
+                    Install-Symbol — oder im Browser-Menü (⋮) auf «Streamen, speichern und teilen →
+                    Seite als App installieren». In Safari: Teilen → Zum Dock oder Home-Bildschirm
+                    hinzufügen.
                   </p>
                 )}
               </section>
