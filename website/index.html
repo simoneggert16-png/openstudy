@@ -149,7 +149,7 @@
           </a>
 
           <a
-            href="./app/?mode=demo&scheme=focus-cream"
+            href="./app/?scheme=focus-cream"
             class="btn btn-accent header-open-btn js-app-link"
           >
             OpenStudy öffnen
@@ -180,7 +180,7 @@
 
             <div class="hero-cta-row">
               <a
-                href="./app/?mode=demo&scheme=focus-cream"
+                href="./app/?scheme=focus-cream"
                 class="btn btn-accent btn-lg js-app-link"
                 id="hero-open-btn"
               >
@@ -603,7 +603,7 @@
           <div class="install-action-bar">
             <div class="install-action-buttons">
               <a
-                href="./app/?mode=demo&scheme=focus-cream"
+                href="./app/?scheme=focus-cream"
                 class="btn btn-accent btn-lg js-app-link"
               >
                 <span>OpenStudy öffnen</span>
@@ -725,7 +725,7 @@ npm run bridge</code></pre>
           <a href="#funktionen">Funktionen</a>
           <a href="#app-installieren">Desktop-App</a>
           <a href="#datenschutz">Datenschutz</a>
-          <a href="./app/?mode=demo&scheme=focus-cream" class="js-app-link">App öffnen</a>
+          <a href="./app/?scheme=focus-cream" class="js-app-link">App öffnen</a>
           <a
             href="https://github.com/simoneggert16-png/openstudy"
             target="_blank"
@@ -830,7 +830,7 @@ npm run bridge</code></pre>
         </div>
         <div class="install-modal-footer">
           <a
-            href="./app/?mode=demo&scheme=focus-cream"
+            href="./app/?scheme=focus-cream"
             class="btn btn-accent js-app-link"
             id="install-guide-open-app"
           >
@@ -910,7 +910,7 @@ npm run bridge</code></pre>
 
         function updateAppLinks() {
           var target =
-            appBase + '?mode=demo&scheme=' + encodeURIComponent(activeScheme);
+            appBase + '?scheme=' + encodeURIComponent(activeScheme);
           document.querySelectorAll('.js-app-link').forEach(function (el) {
             el.setAttribute('href', target);
           });

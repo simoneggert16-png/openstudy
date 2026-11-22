@@ -695,6 +695,15 @@ export default function App() {
         onUpdateProvider={updateProvider}
         onOpenSettings={() => openSettings('ai')}
         onConnectionStateChange={setLiveStatus}
+        onUpsertNote={upsertNote}
+        onAddCards={addCards}
+        onAddPlanTasks={addPlanTasks}
+        onAddSchoolScheduleItems={addSchoolScheduleItems}
+        onNavigate={navigate}
+        onSelectCourse={setActiveCourse}
+        onAddHermesMemory={addHermesMemory}
+        onUpsertHermesSkill={upsertHermesSkill}
+        onLogHermesAction={logHermesAction}
       />
 
       {/* Settings Modal */}

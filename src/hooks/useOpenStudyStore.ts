@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { getColorSchemeById } from '../data/colorSchemes';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { COLOR_SCHEMES, getColorSchemeById } from '../data/colorSchemes';
 import { createDemoState } from '../data/demoData';
 import {
   ColorSchemeId,
@@ -13,6 +13,7 @@ import {
   ObsidianNote,
   OpenStudyState,
   ProviderConfig,
+  QuizItem,
   SchoolScheduleItem,
   ScreenSpotlight,
   StudyCard,
@@ -21,7 +22,34 @@ import {
   VoicePreferences,
 } from '../types';
 
+const SETTINGS_STORAGE_KEY = 'openstudy-settings-v1';
 const STORAGE_KEY = 'openstudy-local-state-v1';
+const MAX_PERSISTED_OBSIDIAN_METADATA = 40;
+
+interface PersistedSettings {
+  provider: ProviderConfig;
+  voice: VoicePreferences;
+  colorScheme: ColorSchemeId;
+  theme: 'light' | 'dark';
+  dailyGoalMinutes: number;
+  onboardingDone: boolean;
+}
+
+interface PersistedWorkspaceState {
+  streakDays: number;
+  activeCourseId: string;
+  courses: SubjectCourse[];
+  notes: StudyNotePage[];
+  cards: StudyCard[];
+  quizzes: QuizItem[];
+  dailyPlan: DailyPlanTask[];
+  focusLogs: FocusSessionLog[];
+  obsidianNotes: ObsidianNote[];
+  schoolSchedule: SchoolScheduleItem[];
+  hermesMemory: HermesMemoryEntry[];
+  hermesSkills: HermesSkill[];
+  hermesActionLog: HermesToolExecution[];
+}
 
 export function isDemoQueryActive(): boolean {
   try {
@@ -32,16 +60,104 @@ export function isDemoQueryActive(): boolean {
   }
 }
 
+function getValidSchemeFromQuery(): ColorSchemeId | undefined {
+  try {
+    const schemeParam = new URLSearchParams(window.location.search).get('scheme');
+    if (schemeParam && COLOR_SCHEMES.some((s) => s.id === schemeParam)) {
+      return schemeParam as ColorSchemeId;
+    }
+  } catch {
+    // ignore malformed location
+  }
+  return undefined;
+}
+
+function extractSettingsPayload(state: OpenStudyState): PersistedSettings {
+  return {
+    provider: state.provider,
+    voice: state.voice,
+    colorScheme: state.colorScheme,
+    theme: state.theme,
+    dailyGoalMinutes: state.dailyGoalMinutes,
+    onboardingDone: state.onboardingDone,
+  };
+}
+
+function stripObsidianNotesForStorage(notes: ObsidianNote[]): ObsidianNote[] {
+  if (!Array.isArray(notes) || notes.length === 0) return [];
+  // Keep context-selected notes first so selections survive reloads without storing bulky markdown bodies
+  const prioritized = [
+    ...notes.filter((n) => n.selectedForContext),
+    ...notes.filter((n) => !n.selectedForContext),
+  ];
+  return prioritized.slice(0, MAX_PERSISTED_OBSIDIAN_METADATA).map((note) => ({
+    path: note.path,
+    title: note.title,
+    excerpt: typeof note.excerpt === 'string' ? note.excerpt.slice(0, 180) : '',
+    content: '',
+    wikilinks: Array.isArray(note.wikilinks) ? note.wikilinks.slice(0, 12) : [],
+    selectedForContext: Boolean(note.selectedForContext),
+  }));
+}
+
+function buildWorkspacePayload(state: OpenStudyState): PersistedWorkspaceState {
+  return {
+    streakDays: state.streakDays,
+    activeCourseId: state.activeCourseId,
+    courses: state.courses,
+    notes: state.notes,
+    cards: state.cards,
+    quizzes: state.quizzes,
+    dailyPlan: state.dailyPlan,
+    focusLogs: state.focusLogs,
+    obsidianNotes: stripObsidianNotesForStorage(state.obsidianNotes),
+    schoolSchedule: state.schoolSchedule,
+    hermesMemory: state.hermesMemory.slice(0, 40),
+    hermesSkills: state.hermesSkills,
+    hermesActionLog: state.hermesActionLog.slice(0, 50),
+  };
+}
+
+function persistSettings(state: OpenStudyState): boolean {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(extractSettingsPayload(state)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function persistWorkspace(state: OpenStudyState): void {
+  const payload = buildWorkspacePayload(state);
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Fallback if workspace payload still exceeds browser quota: drop cached metadata & trim logs
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          ...payload,
+          obsidianNotes: [],
+          hermesActionLog: payload.hermesActionLog.slice(0, 15),
+        })
+      );
+    } catch {
+      // ignore storage quota errors; dedicated settings key stays protected
+    }
+  }
+}
+
 function loadState(): OpenStudyState {
   const demo = createDemoState();
   const envGemini = (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) ?? '';
   const envBridge = (import.meta.env.VITE_BRIDGE_URL as string | undefined) ?? 'http://127.0.0.1:4319';
   const envOllama = (import.meta.env.VITE_OLLAMA_URL as string | undefined) ?? 'http://127.0.0.1:11434';
+  const schemeFromQuery = getValidSchemeFromQuery();
 
   // Isolated demo mode (used for public showcase & automated preview screenshots)
   if (isDemoQueryActive()) {
-    const schemeParam = new URLSearchParams(window.location.search).get('scheme') ?? undefined;
-    const schemeDef = getColorSchemeById(schemeParam || demo.colorScheme);
+    const schemeDef = getColorSchemeById(schemeFromQuery ?? demo.colorScheme);
     return {
       ...demo,
       colorScheme: schemeDef.id,
@@ -50,53 +166,122 @@ function loadState(): OpenStudyState {
     };
   }
 
+  let parsedSettings: Partial<PersistedSettings> | null = null;
+  let parsedWorkspace: Partial<OpenStudyState> | null = null;
+
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return {
-        ...demo,
-        provider: {
-          ...demo.provider,
-          geminiApiKey: envGemini,
-          bridgeUrl: envBridge,
-          ollamaUrl: envOllama,
-        },
-      };
+    const rawSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (rawSettings) {
+      parsedSettings = JSON.parse(rawSettings) as Partial<PersistedSettings>;
     }
-    const parsed = JSON.parse(raw) as Partial<OpenStudyState>;
-    const resolvedScheme = getColorSchemeById(
-      parsed.colorScheme ?? (parsed.theme === 'dark' ? 'midnight-teal' : 'focus-cream')
-    );
+  } catch {
+    parsedSettings = null;
+  }
+
+  try {
+    const rawWorkspace = localStorage.getItem(STORAGE_KEY);
+    if (rawWorkspace) {
+      parsedWorkspace = JSON.parse(rawWorkspace) as Partial<OpenStudyState>;
+    }
+  } catch {
+    parsedWorkspace = null;
+  }
+
+  if (!parsedSettings && !parsedWorkspace) {
+    const resolvedScheme = getColorSchemeById(schemeFromQuery ?? demo.colorScheme);
     return {
       ...demo,
-      ...parsed,
-      onboardingDone: true,
       colorScheme: resolvedScheme.id,
       theme: resolvedScheme.isDark ? 'dark' : 'light',
       provider: {
         ...demo.provider,
-        ...(parsed.provider ?? {}),
-        geminiApiKey: parsed.provider?.geminiApiKey || envGemini,
+        geminiApiKey: envGemini,
+        bridgeUrl: envBridge,
+        ollamaUrl: envOllama,
       },
-      voice: {
-        ...demo.voice,
-        ...(parsed.voice ?? {}),
-      },
-      hermesMemory: Array.isArray(parsed.hermesMemory) ? parsed.hermesMemory : demo.hermesMemory,
-      hermesSkills: Array.isArray(parsed.hermesSkills) && parsed.hermesSkills.length > 0
-        ? parsed.hermesSkills
-        : demo.hermesSkills,
-      hermesActionLog: Array.isArray(parsed.hermesActionLog) ? parsed.hermesActionLog : demo.hermesActionLog,
-      screenSpotlights: [],
     };
-  } catch {
-    return demo;
   }
+
+  // Prefer dedicated settings key; seamlessly migrate legacy settings stored in STORAGE_KEY
+  const savedScheme = parsedSettings?.colorScheme ?? parsedWorkspace?.colorScheme;
+  const savedTheme = parsedSettings?.theme ?? parsedWorkspace?.theme;
+  const resolvedScheme = getColorSchemeById(
+    schemeFromQuery ??
+      savedScheme ??
+      (savedTheme === 'dark' ? 'midnight-teal' : 'focus-cream')
+  );
+
+  const savedProvider: Partial<ProviderConfig> =
+    parsedSettings?.provider ?? parsedWorkspace?.provider ?? {};
+  const savedVoice: Partial<VoicePreferences> =
+    parsedSettings?.voice ?? parsedWorkspace?.voice ?? {};
+  const resolvedGoalMinutes =
+    typeof parsedSettings?.dailyGoalMinutes === 'number'
+      ? parsedSettings.dailyGoalMinutes
+      : typeof parsedWorkspace?.dailyGoalMinutes === 'number'
+        ? parsedWorkspace.dailyGoalMinutes
+        : demo.dailyGoalMinutes;
+  const resolvedOnboardingDone =
+    typeof parsedSettings?.onboardingDone === 'boolean'
+      ? parsedSettings.onboardingDone
+      : typeof parsedWorkspace?.onboardingDone === 'boolean'
+        ? parsedWorkspace.onboardingDone
+        : true;
+
+  return {
+    ...demo,
+    ...(parsedWorkspace ?? {}),
+    onboardingDone: resolvedOnboardingDone,
+    colorScheme: resolvedScheme.id,
+    theme: resolvedScheme.isDark ? 'dark' : 'light',
+    dailyGoalMinutes: resolvedGoalMinutes,
+    provider: {
+      ...demo.provider,
+      bridgeUrl: envBridge,
+      ollamaUrl: envOllama,
+      ...savedProvider,
+      geminiApiKey: savedProvider.geminiApiKey || envGemini,
+    },
+    voice: {
+      ...demo.voice,
+      ...savedVoice,
+    },
+    obsidianNotes: Array.isArray(parsedWorkspace?.obsidianNotes)
+      ? parsedWorkspace.obsidianNotes
+      : demo.obsidianNotes,
+    hermesMemory: Array.isArray(parsedWorkspace?.hermesMemory)
+      ? parsedWorkspace.hermesMemory
+      : demo.hermesMemory,
+    hermesSkills:
+      Array.isArray(parsedWorkspace?.hermesSkills) && parsedWorkspace.hermesSkills.length > 0
+        ? parsedWorkspace.hermesSkills
+        : demo.hermesSkills,
+    hermesActionLog: Array.isArray(parsedWorkspace?.hermesActionLog)
+      ? parsedWorkspace.hermesActionLog
+      : demo.hermesActionLog,
+    screenSpotlights: [],
+  };
 }
 
 export function useOpenStudyStore() {
   const [state, setState] = useState<OpenStudyState>(loadState);
   const demoMode = isDemoQueryActive();
+  const reconnectedVaultRef = useRef<string>('');
+
+  // Clean up one-shot ?scheme= query param after initial load in normal mode so later in-app switches stick
+  useEffect(() => {
+    if (demoMode) return;
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('scheme')) {
+        url.searchParams.delete('scheme');
+        const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+        window.history.replaceState(null, '', nextUrl);
+      }
+    } catch {
+      // ignore on restricted origins (e.g. file://)
+    }
+  }, [demoMode]);
 
   useEffect(() => {
     const scheme = getColorSchemeById(state.colorScheme);
@@ -116,13 +301,128 @@ export function useOpenStudyStore() {
     if (metaTheme) {
       metaTheme.setAttribute('content', scheme.themeColor);
     }
-    if (demoMode) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // ignore storage quota errors
+
+    if (demoMode) {
+      // Keep demo screenshots isolated, but persist an explicitly entered Gemini API key
+      if (state.provider.geminiApiKey.trim()) {
+        try {
+          const existingRaw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+          const existing = existingRaw
+            ? (JSON.parse(existingRaw) as Partial<PersistedSettings>)
+            : {};
+          const merged: PersistedSettings = {
+            ...extractSettingsPayload(state),
+            ...existing,
+            provider: {
+              ...state.provider,
+              ...(existing.provider ?? {}),
+              geminiApiKey: state.provider.geminiApiKey,
+            },
+          };
+          localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(merged));
+        } catch {
+          // ignore storage quota errors
+        }
+      }
+      return;
+    }
+
+    // Save tiny settings key FIRST so API keys & preferences are completely immune to workspace quota issues
+    const settingsSaved = persistSettings(state);
+    persistWorkspace(state);
+    if (!settingsSaved) {
+      // Retry tiny settings write after workspace compaction frees legacy bloated space
+      persistSettings(state);
     }
   }, [state, demoMode]);
+
+  // Quietly re-hydrate connected Obsidian vault from local companion bridge on startup
+  const savedVaultPath = state.provider.obsidianVaultPath.trim();
+  const savedBridgeUrl = state.provider.bridgeUrl.trim();
+  const obsidianNeedsHydration =
+    state.obsidianNotes.length === 0 ||
+    state.obsidianNotes.every((note) => !note.content);
+
+  useEffect(() => {
+    if (demoMode || !savedVaultPath || !obsidianNeedsHydration) return;
+    if (reconnectedVaultRef.current === savedVaultPath) return;
+
+    const normalizedBridgeUrl = (savedBridgeUrl || 'http://127.0.0.1:4319').replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(normalizedBridgeUrl)) return;
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 1500);
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(
+          `${normalizedBridgeUrl}/api/obsidian/notes?vaultPath=${encodeURIComponent(savedVaultPath)}`,
+          { method: 'GET', signal: controller.signal }
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          ok?: boolean;
+          notes?: ObsidianNote[];
+        };
+        if (cancelled || !data?.ok || !Array.isArray(data.notes) || data.notes.length === 0) {
+          return;
+        }
+        const incoming = data.notes.filter(
+          (note): note is ObsidianNote => Boolean(note && typeof note.path === 'string')
+        );
+        if (incoming.length === 0) return;
+
+        setState((prev) => {
+          if (prev.obsidianNotes.some((n) => Boolean(n.content))) {
+            return prev;
+          }
+          const prevSelection = new Map(
+            prev.obsidianNotes.map((n) => [n.path, Boolean(n.selectedForContext)])
+          );
+          const hasPrevSelections = prev.obsidianNotes.length > 0;
+          const hydrated: ObsidianNote[] = incoming
+            .map((note, idx) => ({
+              path: note.path,
+              title:
+                typeof note.title === 'string' && note.title.trim()
+                  ? note.title.trim()
+                  : note.path.split('/').pop()?.replace(/\.md$/i, '') || note.path,
+              excerpt: typeof note.excerpt === 'string' ? note.excerpt : '',
+              content: typeof note.content === 'string' ? note.content : '',
+              wikilinks: Array.isArray(note.wikilinks)
+                ? note.wikilinks.filter((w): w is string => typeof w === 'string')
+                : [],
+              selectedForContext: prevSelection.has(note.path)
+                ? Boolean(prevSelection.get(note.path))
+                : hasPrevSelections
+                  ? false
+                  : typeof note.selectedForContext === 'boolean'
+                    ? note.selectedForContext
+                    : idx < 3,
+            }))
+            .sort((a, b) => a.title.localeCompare(b.title));
+          return {
+            ...prev,
+            obsidianNotes: hydrated,
+          };
+        });
+      } catch {
+        // Best-effort startup reconnect: silently ignore if bridge is offline or times out
+      } finally {
+        window.clearTimeout(timeoutId);
+        if (!cancelled) {
+          reconnectedVaultRef.current = savedVaultPath;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [demoMode, savedVaultPath, savedBridgeUrl, obsidianNeedsHydration]);
 
   const setColorScheme = useCallback((schemeId: ColorSchemeId) => {
     const scheme = getColorSchemeById(schemeId);

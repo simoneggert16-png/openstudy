@@ -292,6 +292,50 @@ function buildExcerpt(markdown: string): string {
   return body.length > 170 ? `${body.slice(0, 167).trim()}...` : body;
 }
 
+const TOP_CONTEXT_MOC_REGEX =
+  /(\bmoc\b|\bindex\b|\bhome\b|\bstart\b|\bdashboard\b|\boverview\b|\bübersicht\b|\breadme\b|\bprojekte\b|\bprojects\b|\bfokus\b|\bfocus\b)/i;
+
+function selectTopContextPaths(
+  notes: Array<{
+    path: string;
+    title: string;
+    content: string;
+    wikilinks: string[];
+    recencyRank?: number;
+  }>,
+  maxCount = 6
+): Set<string> {
+  if (notes.length === 0) return new Set();
+
+  const scored = notes.map((note, idx) => {
+    const cleanPath = note.path.replace(/\\/g, '/').replace(/^\/+/, '');
+    const depth = cleanPath.split('/').length - 1;
+    let score = 0;
+
+    if (TOP_CONTEXT_MOC_REGEX.test(note.title) || TOP_CONTEXT_MOC_REGEX.test(cleanPath)) {
+      score += 100;
+    }
+    if (depth === 0) {
+      score += 28;
+    } else if (depth === 1) {
+      score += 10;
+    }
+    score += Math.min(note.wikilinks.length, 14) * 3;
+    if (note.content.trim().length > 140) {
+      score += 10;
+    }
+    const rank = typeof note.recencyRank === 'number' ? note.recencyRank : idx;
+    if (rank < 12) {
+      score += Math.max(2, 24 - rank * 2);
+    }
+
+    return { path: note.path, score, rank };
+  });
+
+  scored.sort((a, b) => b.score - a.score || a.rank - b.rank);
+  return new Set(scored.slice(0, maxCount).map((item) => item.path));
+}
+
 function normalizeBridgeNotes(
   incoming: ObsidianNote[],
   existing: ObsidianNote[]
@@ -299,8 +343,9 @@ function normalizeBridgeNotes(
   const existingSelection = new Map(
     existing.map((n) => [n.path, n.selectedForContext])
   );
+  const hasExistingSelection = existing.some((n) => n.selectedForContext);
 
-  return incoming
+  const prepared = incoming
     .filter((n) => n && typeof n.path === 'string')
     .map((note, idx) => {
       const content = typeof note.content === 'string' ? note.content : '';
@@ -315,7 +360,6 @@ function normalizeBridgeNotes(
       const wikilinks = Array.isArray(note.wikilinks)
         ? note.wikilinks.filter((w): w is string => typeof w === 'string')
         : extractWikilinks(content);
-      const prevSelected = existingSelection.get(note.path);
 
       return {
         path: note.path,
@@ -323,12 +367,31 @@ function normalizeBridgeNotes(
         excerpt,
         content,
         wikilinks,
-        selectedForContext:
-          prevSelected !== undefined
-            ? prevSelected
-            : typeof note.selectedForContext === 'boolean'
-              ? note.selectedForContext
-              : idx < 3,
+        incomingSelected: note.selectedForContext === true,
+        recencyRank: idx,
+      };
+    });
+
+  const autoSelectedPaths = hasExistingSelection
+    ? new Set<string>()
+    : selectTopContextPaths(prepared, 6);
+
+  return prepared
+    .map((item) => {
+      const prevSelected = existingSelection.get(item.path);
+      const selectedForContext = hasExistingSelection
+        ? prevSelected !== undefined
+          ? prevSelected
+          : item.incomingSelected
+        : item.incomingSelected || autoSelectedPaths.has(item.path);
+
+      return {
+        path: item.path,
+        title: item.title,
+        excerpt: item.excerpt,
+        content: item.content,
+        wikilinks: item.wikilinks,
+        selectedForContext,
       };
     })
     .sort((a, b) => a.title.localeCompare(b.title));
@@ -968,7 +1031,7 @@ export function ObsidianAndImportHub({
       setVaultFolderName(vault.name);
       setSyncCounts((prev) => ({ ...prev, obsidian: normalized.length }));
       setObsidianStatus(
-        `${normalized.length} Markdown-Notizen aus «${vault.name}» verbunden.`
+        `${normalized.length} Markdown-Notizen aus «${vault.name}» verbunden — Live-Suche über den gesamten Vault ist aktiv.`
       );
 
       if (state.provider.autoSyncEnabled) {
@@ -993,31 +1056,75 @@ export function ObsidianAndImportHub({
     const existingSelection = new Map(
       state.obsidianNotes.map((n) => [n.path, n.selectedForContext])
     );
+    const hasExistingSelection = state.obsidianNotes.some((n) => n.selectedForContext);
 
-    const parsedNotes: ObsidianNote[] = [];
+    const rawEntries: Array<{
+      path: string;
+      title: string;
+      excerpt: string;
+      content: string;
+      wikilinks: string[];
+      lastModified: number;
+    }> = [];
+
     for (let i = 0; i < entries.length; i += 1) {
       const { file, relPath } = entries[i];
       const content = await file.text();
       const title = extractTitleFromMarkdown(content, file.name);
       const excerpt = buildExcerpt(content);
       const wikilinks = extractWikilinks(content);
-      const previouslySelected = existingSelection.get(relPath);
 
-      parsedNotes.push({
+      rawEntries.push({
         path: relPath,
         title,
         excerpt,
         content,
         wikilinks,
-        selectedForContext:
-          previouslySelected !== undefined ? previouslySelected : i < 3,
+        lastModified: file.lastModified || 0,
       });
     }
 
-    parsedNotes.sort((a, b) => a.title.localeCompare(b.title));
+    const sortedByRecency = [...rawEntries].sort(
+      (a, b) => b.lastModified - a.lastModified
+    );
+    const recencyRankByPath = new Map(
+      sortedByRecency.map((item, idx) => [item.path, idx])
+    );
+
+    const autoSelectedPaths = hasExistingSelection
+      ? new Set<string>()
+      : selectTopContextPaths(
+          rawEntries.map((item) => ({
+            path: item.path,
+            title: item.title,
+            content: item.content,
+            wikilinks: item.wikilinks,
+            recencyRank: recencyRankByPath.get(item.path) ?? 999,
+          })),
+          6
+        );
+
+    const parsedNotes: ObsidianNote[] = rawEntries
+      .map((item) => {
+        const previouslySelected = existingSelection.get(item.path);
+        const selectedForContext = hasExistingSelection
+          ? previouslySelected ?? false
+          : autoSelectedPaths.has(item.path);
+
+        return {
+          path: item.path,
+          title: item.title,
+          excerpt: item.excerpt,
+          content: item.content,
+          wikilinks: item.wikilinks,
+          selectedForContext,
+        };
+      })
+      .sort((a, b) => a.title.localeCompare(b.title));
+
     onSetObsidianNotes(parsedNotes);
     setObsidianStatus(
-      `${parsedNotes.length} Markdown-Dateien${sourceLabel ? ` aus «${sourceLabel}»` : ''} lokal geladen.`
+      `${parsedNotes.length} Markdown-Dateien${sourceLabel ? ` aus «${sourceLabel}»` : ''} lokal geladen — Live-Suche aktiv.`
     );
   };
 
@@ -1837,9 +1944,19 @@ export function ObsidianAndImportHub({
 
         {/* Summary Counters (flat inline metadata) */}
         <div className="flex flex-wrap items-center gap-2.5 text-[12.5px] font-mono-num text-[var(--text-muted)]">
-          <span>
-            Obsidian: {state.obsidianNotes.length} ({activeContextCount} aktiv)
-          </span>
+          {state.obsidianNotes.length > 0 || state.provider.obsidianVaultPath.trim() ? (
+            <span>
+              Obsidian:{' '}
+              {state.obsidianNotes.length > 0
+                ? state.obsidianNotes.length
+                : displayedObsidianCount}
+              {' · '}
+              <span className="text-[var(--accent)]">Live-Suche aktiv</span>
+              {activeContextCount > 0 ? ` (${activeContextCount} angepinnt)` : ''}
+            </span>
+          ) : (
+            <span>Obsidian: 0</span>
+          )}
           <span className="text-[var(--border-strong)]">·</span>
           <span>Termine: {state.schoolSchedule.length}</span>
           {state.provider.autoSyncEnabled && (
@@ -1922,7 +2039,7 @@ export function ObsidianAndImportHub({
                   Obsidian-Vaults
                 </h2>
                 <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
-                  Lokale Vaults erscheinen automatisch zum Verbinden. Alternativ wählst du deinen Ordner direkt im Browser.
+                  Lokale Vaults erscheinen automatisch zum Verbinden. Alternativ wählst du deinen Ordner direkt im Browser. Sprachtutor und Hermes durchsuchen deinen gesamten Vault automatisch live.
                   {vaultFolderName && (
                     <span className="ml-1.5 font-mono-num text-[12px] text-[var(--accent)]">
                       · {vaultFolderName}

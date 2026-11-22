@@ -353,6 +353,48 @@ export const HERMES_LIVE_FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
       required: ['items'],
     },
   },
+  {
+    name: 'get_obsidian_overview',
+    description:
+      'Zeigt eine vollständige Übersicht über den verbundenen Obsidian-Vault des Lernenden (Ordnerstruktur, Anzahl Notizen pro Ordner, Übersichtsseiten/MOCs und neuste Notizen). IMMER aufrufen, wenn der Lernende fragt, was in seinem Obsidian-Vault liegt.',
+  },
+  {
+    name: 'search_obsidian_vault',
+    description:
+      'Durchsucht ALLE Markdown-Notizen im verbundenen Obsidian-Vault des Lernenden nach Stichworten, Projekten, Fächern, Ideen oder Themen (z. B. "Projekt", "Coding", "BWL", "Ideen"). IMMER aufrufen, bevor du Fragen zu Projekten, Notizen oder Inhalten aus dem Obsidian-Vault beantwortest.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description:
+            'Suchbegriff, Stichwort, Projektname, Fach oder Thema im Obsidian-Vault.',
+        },
+        folder: {
+          type: Type.STRING,
+          description:
+            'Optionaler Ordnername im Vault, um die Suche einzugrenzen.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'read_obsidian_note',
+    description:
+      'Liest den Inhalt einer konkreten Markdown-Notiz aus dem Obsidian-Vault anhand ihres Pfades (aus search_obsidian_vault oder get_obsidian_overview).',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        relPath: {
+          type: Type.STRING,
+          description:
+            'Relativer Pfad der Markdown-Notiz im Vault (aus search_obsidian_vault oder get_obsidian_overview).',
+        },
+      },
+      required: ['relPath'],
+    },
+  },
 ];
 
 // ---------- Helpers ----------
@@ -487,6 +529,92 @@ function fireAndForgetBridgePost(
   } catch {
     // Non-blocking best-effort sync to local companion bridge
   }
+}
+
+async function fetchBridgeJsonWithTimeout<T>(
+  url: string,
+  timeoutMs: number
+): Promise<T | null> {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => null)) as T | null;
+    return data;
+  } catch {
+    return null;
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+}
+
+function inferObsidianVaultName(vaultPath?: string): string {
+  const cleaned = (vaultPath ?? '').trim().replace(/[\\/]+$/, '');
+  if (!cleaned) return 'Obsidian-Vault';
+  const parts = cleaned.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || 'Obsidian-Vault';
+}
+
+function normalizeRelPath(rawPath: string): string {
+  return rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+function detectCommonRootSegment(paths: string[]): string | null {
+  if (paths.length < 2) return null;
+  let shared: string | null = null;
+  for (const raw of paths) {
+    const parts = normalizeRelPath(raw).split('/');
+    if (parts.length < 2) return null;
+    if (shared === null) {
+      shared = parts[0];
+    } else if (shared !== parts[0]) {
+      return null;
+    }
+  }
+  return shared;
+}
+
+function extractObsidianFolder(rawPath: string, commonRoot: string | null): string {
+  const clean = normalizeRelPath(rawPath);
+  const parts = clean.split('/');
+  const effectiveParts =
+    commonRoot && parts.length > 1 && parts[0] === commonRoot ? parts.slice(1) : parts;
+  return effectiveParts.length > 1 ? effectiveParts[0] : '(Stammordner)';
+}
+
+function buildObsidianMatchSnippet(
+  content: string,
+  fallbackExcerpt: string,
+  terms: string[]
+): string {
+  const body = content
+    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!body) return fallbackExcerpt.slice(0, 320);
+
+  const lower = body.toLowerCase();
+  let matchIdx = -1;
+  for (const term of terms) {
+    const idx = lower.indexOf(term);
+    if (idx !== -1 && (matchIdx === -1 || idx < matchIdx)) {
+      matchIdx = idx;
+    }
+  }
+
+  if (matchIdx === -1) {
+    return body.length > 300 ? `${body.slice(0, 297).trimEnd()}...` : body;
+  }
+
+  const start = Math.max(0, matchIdx - 90);
+  const end = Math.min(body.length, start + 300);
+  const prefix = start > 0 ? '...' : '';
+  const suffix = end < body.length ? '...' : '';
+  return `${prefix}${body.slice(start, end).trim()}${suffix}`;
 }
 
 function formatNoteExcerpt(note: StudyNotePage, maxChars: number): string {
@@ -629,6 +757,11 @@ export function buildHermesTeacherSystemPrompt(params: {
     '- Trage erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 3 Monate (90 Tage, z. B. aus einem geöffneten Schulportal oder Stundenplan) mit add_school_schedule direkt in den OpenStudy-Prüfungskalender ein.',
     '- Nutze save_learning_memory für wichtige dauerhafte Beobachtungen über Lernstil, Stärken, Schwächen oder Ziele.',
     '- Nutze save_custom_skill nur dann, wenn du ein wiederverwendbares Lehrverfahren (SKILL.md) für wiederkehrende Aufgaben festhalten oder verbessern kannst.',
+    '',
+    'OBSIDIAN-VAULT-REGEL:',
+    '- Wenn der Lernende nach seinem Obsidian-Vault, seinen Projekten, Ideen, Notizen oder Schulunterlagen fragt, rufe ZUERST IMMER get_obsidian_overview oder search_obsidian_vault auf.',
+    '- Um eine gefundene Notiz im Detail zu lesen, rufe read_obsidian_note mit dem relativen Pfad aus den Suchergebnissen auf.',
+    '- Behaupte NIEMALS, du könntest seinen Vault nicht sehen, und verwechsle NIEMALS die Demo-Kurse (z. B. English B2) mit seinem echten Obsidian-Vault.',
   ].join('\n');
 
   // TIER 2 — Active SKILL.md Skills & Workspace Context
@@ -643,6 +776,25 @@ export function buildHermesTeacherSystemPrompt(params: {
 
   const contextLines: string[] = [];
 
+  const obsidianPath = state.provider.obsidianVaultPath?.trim() || '';
+  const obsidianCount = state.obsidianNotes.length;
+  if (obsidianPath || obsidianCount > 0) {
+    const vaultLabel = inferObsidianVaultName(obsidianPath);
+    const details = [
+      obsidianCount > 0 ? `${obsidianCount} Notizen im Speicher` : 'lokaler Vault-Pfad verbunden',
+      obsidianPath ? `Pfad: ${obsidianPath}` : '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    contextLines.push(
+      `OBSIDIAN-VAULT-STATUS: VERBUNDEN (${vaultLabel} — ${details}). Der GESAMTE Vault ist live durchsuchbar über get_obsidian_overview, search_obsidian_vault und read_obsidian_note. Verwechsle diesen echten Obsidian-Vault niemals mit den lokalen OpenStudy-Kursen unten.`
+    );
+  } else {
+    contextLines.push(
+      'OBSIDIAN-VAULT-STATUS: Live-Zugriff über lokale Bridge verfügbar (erkennt den aktiven Obsidian-Vault automatisch). Rufe bei Fragen zu Obsidian, Projekten, Ideen oder persönlichen Notizen immer zuerst get_obsidian_overview oder search_obsidian_vault auf.'
+    );
+  }
+
   if (activeWindowTitle?.trim()) {
     contextLines.push(`AKTIVES PC-FENSTER: ${activeWindowTitle.trim()}`);
   }
@@ -653,7 +805,7 @@ export function buildHermesTeacherSystemPrompt(params: {
       .join('\n');
     contextLines.push(
       [
-        `AKTIVER KURS: ${activeCourse.title} (${activeCourse.category})`,
+        `AKTIVER OPENSTUDY-KURS: ${activeCourse.title} (${activeCourse.category})`,
         activeCourse.examDate ? `Prüfungstermin: ${activeCourse.examDate}` : '',
         activeCourse.description ? `Schwerpunkt: ${activeCourse.description}` : '',
         objectives ? `Lernziele:\n${objectives}` : '',
@@ -669,7 +821,7 @@ export function buildHermesTeacherSystemPrompt(params: {
       .map((c) => c.title)
       .join(', ');
     if (otherCourses) {
-      contextLines.push(`WEITERE VERFÜGBARE KURSE: ${otherCourses}`);
+      contextLines.push(`WEITERE OPENSTUDY-KURSE: ${otherCourses}`);
     }
   }
 
@@ -678,18 +830,18 @@ export function buildHermesTeacherSystemPrompt(params: {
     : state.notes.slice(0, 3);
   if (relevantNotes.length > 0) {
     contextLines.push(
-      `LOKALE LERNNOTIZEN:\n${relevantNotes.map((n) => formatNoteExcerpt(n, 420)).join('\n')}`
+      `LOKALE OPENSTUDY-LERNNOTIZEN:\n${relevantNotes.map((n) => formatNoteExcerpt(n, 420)).join('\n')}`
     );
   }
 
-  const selectedObsidian = state.obsidianNotes.filter((n) => n.selectedForContext).slice(0, 4);
+  const selectedObsidian = state.obsidianNotes.filter((n) => n.selectedForContext).slice(0, 6);
   if (selectedObsidian.length > 0) {
     const obsLines = selectedObsidian.map((n) => {
       const body = (n.content || n.excerpt || '').replace(/\s+/g, ' ').trim();
       const clipped = body.length > 440 ? `${body.slice(0, 440)}...` : body;
-      return `- ${n.title}: ${clipped}`;
+      return `- ${n.title} (${n.path}): ${clipped}`;
     });
-    contextLines.push(`AUSGEWÄHLTER OBSIDIAN-KONTEXT:\n${obsLines.join('\n')}`);
+    contextLines.push(`ANGEPINNTER OBSIDIAN-STARTKONTEXT (für alle weiteren Notizen search_obsidian_vault nutzen):\n${obsLines.join('\n')}`);
   }
 
   const openTasks = state.dailyPlan.filter((t) => !t.done).slice(0, 5);
@@ -1357,6 +1509,427 @@ export async function executeHermesToolCall(
         });
       }
 
+      case 'get_obsidian_overview': {
+        const vaultPath = state.provider.obsidianVaultPath?.trim() || '';
+        const resolvedBridgeBase = (
+          handlers.bridgeUrl?.trim() ||
+          state.provider.bridgeUrl?.trim() ||
+          'http://127.0.0.1:4319'
+        ).replace(/\/+$/, '');
+        const canUseBridge =
+          Boolean(resolvedBridgeBase) &&
+          (!state.provider.freeOnlyLock || isLocalhostUrl(resolvedBridgeBase));
+
+        if (canUseBridge) {
+          const bridgeData = await fetchBridgeJsonWithTimeout<{
+            ok?: boolean;
+            vaultPath?: string;
+            vaultName?: string;
+            totalNotes?: number;
+            folders?: Array<{ name: string; count: number }>;
+            mocNotes?: Array<{ path: string; title: string }>;
+            recentNotes?: Array<{
+              path: string;
+              title: string;
+              folder: string;
+              updatedAt: string;
+            }>;
+          }>(
+            `${resolvedBridgeBase}/api/obsidian/overview?vaultPath=${encodeURIComponent(vaultPath)}`,
+            2500
+          );
+
+          if (bridgeData?.ok) {
+            const totalNotes =
+              typeof bridgeData.totalNotes === 'number' ? bridgeData.totalNotes : 0;
+            const vaultName = bridgeData.vaultName || inferObsidianVaultName(bridgeData.vaultPath || vaultPath);
+            const folders = Array.isArray(bridgeData.folders)
+              ? bridgeData.folders.slice(0, 40)
+              : [];
+            const mocNotes = Array.isArray(bridgeData.mocNotes)
+              ? bridgeData.mocNotes.slice(0, 20)
+              : [];
+            const recentNotes = Array.isArray(bridgeData.recentNotes)
+              ? bridgeData.recentNotes.slice(0, 20)
+              : [];
+
+            return finish(
+              'ok',
+              `Obsidian-Übersicht geladen (${totalNotes} Notizen, ${vaultName})`,
+              {
+                ok: true,
+                source: 'bridge',
+                vaultPath: bridgeData.vaultPath || vaultPath,
+                vaultName,
+                totalNotes,
+                folders,
+                mocNotes,
+                recentNotes,
+              }
+            );
+          }
+        }
+
+        // Fallback: compute overview from in-memory state.obsidianNotes
+        if (state.obsidianNotes.length === 0) {
+          return finish('ok', 'Obsidian-Vault nicht verbunden', {
+            ok: false,
+            source: 'local-memory',
+            totalNotes: 0,
+            folders: [],
+            mocNotes: [],
+            recentNotes: [],
+            message:
+              'Kein Obsidian-Vault erreichbar (weder über die lokale Begleit-Bridge noch im Browser geladen). Bitte im Bereich Import & Sync einen Vault verbinden.',
+          });
+        }
+
+        const commonRoot = detectCommonRootSegment(state.obsidianNotes.map((n) => n.path));
+        const folderCounts = new Map<string, number>();
+        for (const note of state.obsidianNotes) {
+          const folder = extractObsidianFolder(note.path, commonRoot);
+          folderCounts.set(folder, (folderCounts.get(folder) ?? 0) + 1);
+        }
+
+        const folders = Array.from(folderCounts.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+          .slice(0, 40);
+
+        const mocPattern =
+          /(\bmoc\b|\bindex\b|\bhome\b|\bstart\b|\bdashboard\b|\boverview\b|\bübersicht\b|\breadme\b|\bprojekte\b|\bprojects\b)/i;
+        const mocNotes = state.obsidianNotes
+          .filter(
+            (n) =>
+              mocPattern.test(n.title) ||
+              mocPattern.test(n.path) ||
+              n.wikilinks.length >= 6 ||
+              extractObsidianFolder(n.path, commonRoot) === '(Stammordner)'
+          )
+          .slice(0, 20)
+          .map((n) => ({ path: n.path, title: n.title }));
+
+        const recentNotes = [...state.obsidianNotes]
+          .sort((a, b) => Number(b.selectedForContext) - Number(a.selectedForContext))
+          .slice(0, 20)
+          .map((n) => ({
+            path: n.path,
+            title: n.title,
+            folder: extractObsidianFolder(n.path, commonRoot),
+            updatedAt: '',
+          }));
+
+        const vaultName = inferObsidianVaultName(vaultPath || commonRoot || undefined);
+        return finish(
+          'ok',
+          `Obsidian-Übersicht geladen (${state.obsidianNotes.length} Notizen, ${vaultName})`,
+          {
+            ok: true,
+            source: 'local-memory',
+            vaultPath,
+            vaultName,
+            totalNotes: state.obsidianNotes.length,
+            folders,
+            mocNotes,
+            recentNotes,
+          }
+        );
+      }
+
+      case 'search_obsidian_vault': {
+        const query = toTrimmedString(args.query, 200);
+        const folderFilter = toTrimmedString(args.folder, 120);
+
+        if (!query && !folderFilter) {
+          return finish('error', 'Obsidian-Suche ohne Suchbegriff', {
+            ok: false,
+            error: 'Bitte gib mindestens einen Suchbegriff (query) oder Ordner (folder) an.',
+          });
+        }
+
+        const vaultPath = state.provider.obsidianVaultPath?.trim() || '';
+        const resolvedBridgeBase = (
+          handlers.bridgeUrl?.trim() ||
+          state.provider.bridgeUrl?.trim() ||
+          'http://127.0.0.1:4319'
+        ).replace(/\/+$/, '');
+        const canUseBridge =
+          Boolean(resolvedBridgeBase) &&
+          (!state.provider.freeOnlyLock || isLocalhostUrl(resolvedBridgeBase));
+
+        if (canUseBridge) {
+          const params = new URLSearchParams({
+            q: query,
+            limit: '12',
+          });
+          if (vaultPath) params.set('vaultPath', vaultPath);
+          if (folderFilter) params.set('folder', folderFilter);
+
+          const bridgeData = await fetchBridgeJsonWithTimeout<{
+            ok?: boolean;
+            vaultName?: string;
+            query?: string;
+            totalMatches?: number;
+            results?: Array<{
+              path: string;
+              title: string;
+              folder?: string;
+              score?: number;
+              excerpt?: string;
+            }>;
+          }>(
+            `${resolvedBridgeBase}/api/obsidian/search?${params.toString()}`,
+            3000
+          );
+
+          if (bridgeData?.ok && Array.isArray(bridgeData.results)) {
+            const results = bridgeData.results.slice(0, 12).map((item) => ({
+              path: item.path,
+              title: item.title,
+              folder: item.folder || extractObsidianFolder(item.path, null),
+              excerpt: (item.excerpt || '').slice(0, 360),
+            }));
+            const totalMatches =
+              typeof bridgeData.totalMatches === 'number'
+                ? bridgeData.totalMatches
+                : results.length;
+            const searchLabel = query || folderFilter;
+            const summary =
+              totalMatches > 0
+                ? `Obsidian-Suche «${searchLabel}»: ${totalMatches} Treffer`
+                : `Obsidian-Suche «${searchLabel}»: keine Treffer`;
+
+            return finish('ok', summary, {
+              ok: true,
+              source: 'bridge',
+              vaultName: bridgeData.vaultName || inferObsidianVaultName(vaultPath),
+              query,
+              ...(folderFilter ? { folder: folderFilter } : {}),
+              totalMatches,
+              results,
+            });
+          }
+        }
+
+        // Fallback: search state.obsidianNotes in memory
+        if (state.obsidianNotes.length === 0) {
+          return finish('ok', 'Obsidian-Suche: kein Vault verbunden', {
+            ok: false,
+            source: 'local-memory',
+            query,
+            totalMatches: 0,
+            results: [],
+            message:
+              'Kein Obsidian-Vault erreichbar. Bitte starte die lokale Begleit-Bridge oder verbinde den Vault unter Import & Sync.',
+          });
+        }
+
+        const commonRoot = detectCommonRootSegment(state.obsidianNotes.map((n) => n.path));
+        const queryLower = query.toLowerCase();
+        const folderLower = folderFilter.toLowerCase();
+        const terms = queryLower
+          .split(/[\s,;:!?/\\]+/)
+          .map((t) => t.trim())
+          .filter((t) => t.length >= 2);
+        const effectiveTerms = terms.length > 0 ? terms : queryLower ? [queryLower] : [];
+
+        const scored: Array<{
+          path: string;
+          title: string;
+          folder: string;
+          excerpt: string;
+          score: number;
+        }> = [];
+
+        for (const note of state.obsidianNotes) {
+          const folder = extractObsidianFolder(note.path, commonRoot);
+          const cleanPathLower = normalizeRelPath(note.path).toLowerCase();
+          if (
+            folderLower &&
+            !folder.toLowerCase().includes(folderLower) &&
+            !cleanPathLower.includes(folderLower)
+          ) {
+            continue;
+          }
+
+          if (effectiveTerms.length === 0) {
+            scored.push({
+              path: note.path,
+              title: note.title,
+              folder,
+              excerpt: (note.excerpt || '').slice(0, 320),
+              score: note.selectedForContext ? 5 : 1,
+            });
+            continue;
+          }
+
+          const titleLower = note.title.toLowerCase();
+          const excerptLower = (note.excerpt || '').toLowerCase();
+          const contentLower = (note.content || '').toLowerCase();
+          const linksLower = note.wikilinks.join(' ').toLowerCase();
+
+          let score = 0;
+          let matchedTerms = 0;
+
+          if (queryLower.length >= 2) {
+            if (titleLower.includes(queryLower)) score += 12;
+            if (cleanPathLower.includes(queryLower)) score += 8;
+            if (contentLower.includes(queryLower)) score += 4;
+          }
+
+          for (const term of effectiveTerms) {
+            let termHit = false;
+            if (titleLower.includes(term)) {
+              score += 5;
+              termHit = true;
+            }
+            if (cleanPathLower.includes(term)) {
+              score += 4;
+              termHit = true;
+            }
+            if (linksLower.includes(term)) {
+              score += 3;
+              termHit = true;
+            }
+            if (excerptLower.includes(term) || contentLower.includes(term)) {
+              score += 2;
+              termHit = true;
+            }
+            if (termHit) matchedTerms += 1;
+          }
+
+          if (score === 0) continue;
+          if (matchedTerms === effectiveTerms.length && effectiveTerms.length > 1) {
+            score += 6;
+          }
+
+          scored.push({
+            path: note.path,
+            title: note.title,
+            folder,
+            excerpt: buildObsidianMatchSnippet(
+              note.content || '',
+              note.excerpt || '',
+              effectiveTerms
+            ),
+            score,
+          });
+        }
+
+        scored.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+        const topResults = scored.slice(0, 12).map(({ path, title, folder, excerpt }) => ({
+          path,
+          title,
+          folder,
+          excerpt,
+        }));
+        const searchLabel = query || folderFilter;
+        const summary =
+          scored.length > 0
+            ? `Obsidian-Suche «${searchLabel}»: ${scored.length} Treffer`
+            : `Obsidian-Suche «${searchLabel}»: keine Treffer`;
+
+        return finish('ok', summary, {
+          ok: true,
+          source: 'local-memory',
+          vaultName: inferObsidianVaultName(vaultPath || commonRoot || undefined),
+          query,
+          ...(folderFilter ? { folder: folderFilter } : {}),
+          totalMatches: scored.length,
+          results: topResults,
+        });
+      }
+
+      case 'read_obsidian_note': {
+        const relPath = toTrimmedString(args.relPath, 400);
+        if (!relPath) {
+          return finish('error', 'Kein Notizpfad für read_obsidian_note angegeben', {
+            ok: false,
+            error: 'Parameter "relPath" ist erforderlich.',
+          });
+        }
+
+        const vaultPath = state.provider.obsidianVaultPath?.trim() || '';
+        const resolvedBridgeBase = (
+          handlers.bridgeUrl?.trim() ||
+          state.provider.bridgeUrl?.trim() ||
+          'http://127.0.0.1:4319'
+        ).replace(/\/+$/, '');
+        const canUseBridge =
+          Boolean(resolvedBridgeBase) &&
+          (!state.provider.freeOnlyLock || isLocalhostUrl(resolvedBridgeBase));
+
+        const MAX_NOTE_CHARS = 9000;
+
+        if (canUseBridge) {
+          const params = new URLSearchParams({ relPath });
+          if (vaultPath) params.set('vaultPath', vaultPath);
+
+          const bridgeData = await fetchBridgeJsonWithTimeout<{
+            ok?: boolean;
+            path?: string;
+            title?: string;
+            content?: string;
+          }>(
+            `${resolvedBridgeBase}/api/obsidian/read?${params.toString()}`,
+            2500
+          );
+
+          if (bridgeData?.ok && typeof bridgeData.content === 'string') {
+            const title = bridgeData.title || relPath;
+            const rawContent = bridgeData.content;
+            const truncated = rawContent.length > MAX_NOTE_CHARS;
+            const content = truncated
+              ? `${rawContent.slice(0, MAX_NOTE_CHARS).trimEnd()}\n\n[... gekürzt]`
+              : rawContent;
+
+            return finish('ok', `Obsidian-Notiz gelesen: ${title}`, {
+              ok: true,
+              source: 'bridge',
+              path: bridgeData.path || relPath,
+              title,
+              content,
+              truncated,
+            });
+          }
+        }
+
+        // Fallback: lookup in state.obsidianNotes
+        const targetNorm = normalizeRelPath(relPath).toLowerCase();
+        const found =
+          state.obsidianNotes.find(
+            (n) => normalizeRelPath(n.path).toLowerCase() === targetNorm
+          ) ??
+          state.obsidianNotes.find((n) =>
+            normalizeRelPath(n.path).toLowerCase().endsWith(`/${targetNorm}`)
+          ) ??
+          state.obsidianNotes.find(
+            (n) => n.title.trim().toLowerCase() === relPath.trim().toLowerCase()
+          );
+
+        if (!found) {
+          return finish('error', `Obsidian-Notiz nicht gefunden: ${relPath}`, {
+            ok: false,
+            error: `Die Notiz «${relPath}» wurde weder über die Bridge noch in den geladenen Obsidian-Notizen gefunden.`,
+          });
+        }
+
+        const rawContent = found.content || found.excerpt || '';
+        const truncated = rawContent.length > MAX_NOTE_CHARS;
+        const content = truncated
+          ? `${rawContent.slice(0, MAX_NOTE_CHARS).trimEnd()}\n\n[... gekürzt]`
+          : rawContent;
+
+        return finish('ok', `Obsidian-Notiz gelesen: ${found.title}`, {
+          ok: true,
+          source: 'local-memory',
+          path: found.path,
+          title: found.title,
+          content,
+          truncated,
+        });
+      }
+
       default: {
         return finish('error', `Unbekanntes Werkzeug: ${call.name}`, {
           ok: false,
@@ -1947,7 +2520,7 @@ export async function runHermesAgentTurn(params: {
     'OPTIONALE OPENSTUDY-AKTIONEN:',
     'Falls du eine OpenStudy-Aktion ausführen willst, füge am Ende deiner Antwort einen oder mehrere Blöcke im Format',
     '<hermes_action>{"tool":"<name>","args":{...}}</hermes_action>',
-    'hinzu. Verfügbare Werkzeuge: highlight_screen_region, clear_screen_highlights, create_study_note, create_flashcards, add_daily_plan_tasks, add_school_schedule, navigate_app, save_learning_memory, save_custom_skill.',
+    'hinzu. Verfügbare Werkzeuge: get_obsidian_overview, search_obsidian_vault, read_obsidian_note, highlight_screen_region, clear_screen_highlights, create_study_note, create_flashcards, add_daily_plan_tasks, add_school_schedule, navigate_app, save_learning_memory, save_custom_skill.',
   ].join('\n');
 
   const transcriptHistory = history

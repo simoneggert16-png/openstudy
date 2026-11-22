@@ -148,6 +148,9 @@ const TOOL_DISPLAY_LABELS: Record<string, string> = {
   navigate_app: 'Ansicht gewechselt',
   save_learning_memory: 'Gedächtnis',
   save_custom_skill: 'SKILL.md',
+  get_obsidian_overview: 'Obsidian-Übersicht',
+  search_obsidian_vault: 'Obsidian-Suche',
+  read_obsidian_note: 'Obsidian-Notiz',
 };
 
 function getToolDisplayLabel(toolName: string): string {

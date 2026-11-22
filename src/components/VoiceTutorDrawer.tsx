@@ -29,15 +29,32 @@ import {
 } from 'lucide-react';
 import {
   AgentStance,
+  DailyPlanTask,
+  HermesMemoryEntry,
+  HermesSkill,
+  HermesToolExecution,
+  MainView,
   OpenStudyState,
   ProviderConfig,
   ResponseDepth,
+  SchoolScheduleItem,
   SpeechPace,
+  StudyCard,
   StudyLanguage,
+  StudyNotePage,
   TutorMode,
   VoicePreferences,
 } from '../types';
-import { getVoiceCatalogEntry, VOICE_CATALOG } from '../services/providers';
+import {
+  checkLocalBridge,
+  getVoiceCatalogEntry,
+  VOICE_CATALOG,
+} from '../services/providers';
+import {
+  executeHermesToolCall,
+  HERMES_LIVE_FUNCTION_DECLARATIONS,
+  HermesToolHandlers,
+} from '../services/hermesAgent';
 import {
   AudioTelemetryLevels,
   buildVoiceSystemPrompt,
@@ -59,6 +76,15 @@ export interface VoiceTutorDrawerProps {
   onUpdateProvider: (patch: Partial<ProviderConfig>) => void;
   onOpenSettings: () => void;
   onConnectionStateChange?: (status: LiveConnectionState) => void;
+  onUpsertNote?: (page: StudyNotePage) => void;
+  onAddCards?: (cards: StudyCard[]) => void;
+  onAddPlanTasks?: (tasks: DailyPlanTask[]) => void;
+  onAddSchoolScheduleItems?: (items: SchoolScheduleItem[]) => void;
+  onNavigate?: (view: MainView) => void;
+  onSelectCourse?: (courseId: string) => void;
+  onAddHermesMemory?: (entry: HermesMemoryEntry) => void;
+  onUpsertHermesSkill?: (skill: HermesSkill) => void;
+  onLogHermesAction?: (entry: HermesToolExecution) => void;
 }
 
 const LANGUAGES: StudyLanguage[] = ['de', 'en', 'fr', 'es', 'it'];
@@ -104,6 +130,62 @@ function buildQuickImpulseText(
   return `Review and gently correct my grammar, word choice, and phrasing, and suggest a natural alternative I can repeat aloud. Stay strictly in ${langName}.`;
 }
 
+function buildVoiceVaultAndToolsPrompt(
+  state: OpenStudyState,
+  bridgeOnline: boolean
+): string {
+  const vaultPath = state.provider.obsidianVaultPath?.trim() || '';
+  const loadedCount = state.obsidianNotes.length;
+  const vaultStatus =
+    vaultPath || loadedCount > 0
+      ? `VERBUNDEN (${loadedCount > 0 ? `${loadedCount} Notizen im Speicher` : 'Vault-Pfad gesetzt'}${vaultPath ? `, Pfad: ${vaultPath}` : ''}${bridgeOnline ? ', lokale Live-Bridge online' : ''}).`
+      : bridgeOnline
+        ? 'Lokale Live-Bridge ist online und erkennt den aktiven Obsidian-Vault automatisch.'
+        : 'Rufe bei Fragen zum Vault trotzdem get_obsidian_overview oder search_obsidian_vault auf, um den aktuellen Stand live zu prüfen.';
+
+  return [
+    'OBSIDIAN-VAULT & HERMES-WERKZEUGE (LIVE AKTIV):',
+    `Obsidian-Vault-Status: ${vaultStatus}`,
+    'Du verfügst in diesem Live-Sprachgespräch über echte Werkzeuge:',
+    '- get_obsidian_overview: Liefert die vollständige Ordnerstruktur, Notizanzahl pro Ordner, Übersichtsseiten (MOCs) und neuste Notizen aus dem gesamten Obsidian-Vault.',
+    '- search_obsidian_vault(query, folder?): Durchsucht ALLE Markdown-Notizen im Obsidian-Vault nach Stichworten, Projekten, Ideen, Fächern oder Themen.',
+    '- read_obsidian_note(relPath): Liest den Inhalt einer gefundenen Obsidian-Notiz direkt aus dem Vault.',
+    '- create_study_note, create_flashcards, add_daily_plan_tasks, add_school_schedule, navigate_app, save_learning_memory, save_custom_skill: Führen reale Aktionen in OpenStudy aus.',
+    '',
+    'STRIKTE OBSIDIAN-VAULT-REGELN:',
+    '1. Wenn der Lernende nach seinem Obsidian-Vault, seinen Projekten, Ideen, persönlichen Notizen oder Schulunterlagen fragt, rufe ZUERST IMMER get_obsidian_overview oder search_obsidian_vault auf.',
+    '2. Wenn du genauere Details zu einem Treffer brauchst, rufe anschliessend read_obsidian_note mit dem relativen Pfad auf.',
+    '3. Behaupte NIEMALS, du könntest den Obsidian-Vault nicht sehen oder darauf zugreifen, ohne zuvor get_obsidian_overview oder search_obsidian_vault aufgerufen zu haben.',
+    '4. Verwechsle NIEMALS die lokalen OpenStudy-Beispielkurse (z. B. English B2) mit dem echten Obsidian-Vault des Lernenden.',
+  ].join('\n');
+}
+
+function formatVoiceToolTranscriptNote(
+  toolName: string,
+  summary: string,
+  response: Record<string, unknown>
+): string {
+  if (toolName === 'get_obsidian_overview') {
+    if (response.ok && typeof response.totalNotes === 'number') {
+      return `Obsidian-Übersicht geladen (${response.totalNotes} Notizen)`;
+    }
+    return response.ok ? 'Obsidian-Übersicht geladen' : 'Obsidian-Übersicht: kein Vault verbunden';
+  }
+  if (toolName === 'search_obsidian_vault') {
+    if (response.ok && typeof response.totalMatches === 'number') {
+      return response.totalMatches > 0
+        ? `Obsidian-Suche: ${response.totalMatches} Treffer gefunden`
+        : 'Obsidian-Suche: keine Treffer gefunden';
+    }
+  }
+  if (toolName === 'read_obsidian_note') {
+    if (response.ok && typeof response.title === 'string' && response.title.trim()) {
+      return `Obsidian-Notiz gelesen: ${response.title.trim()}`;
+    }
+  }
+  return summary;
+}
+
 export function VoiceTutorDrawer({
   open,
   onOpenChange,
@@ -113,8 +195,36 @@ export function VoiceTutorDrawer({
   onUpdateProvider,
   onOpenSettings,
   onConnectionStateChange,
+  onUpsertNote,
+  onAddCards,
+  onAddPlanTasks,
+  onAddSchoolScheduleItems,
+  onNavigate,
+  onSelectCourse,
+  onAddHermesMemory,
+  onUpsertHermesSkill,
+  onLogHermesAction,
 }: VoiceTutorDrawerProps) {
   const { voice, provider, courses, notes, obsidianNotes, activeCourseId } = state;
+
+  const normalizedBridgeUrl = useMemo(
+    () => (provider.bridgeUrl.trim() || 'http://127.0.0.1:4319').replace(/\/+$/, ''),
+    [provider.bridgeUrl]
+  );
+
+  const [bridgeOnline, setBridgeOnline] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void checkLocalBridge(normalizedBridgeUrl).then((res) => {
+      if (!cancelled) {
+        setBridgeOnline(res.online);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedBridgeUrl, open]);
 
   const activeCourse = useMemo(
     () => courses.find((c) => c.id === activeCourseId) ?? courses[0],
@@ -126,13 +236,64 @@ export function VoiceTutorDrawer({
     [notes, activeCourse]
   );
 
-  const selectedObsidianCount = useMemo(
-    () => obsidianNotes.filter((n) => n.selectedForContext).length,
-    [obsidianNotes]
-  );
-
   const hasApiKey = provider.geminiApiKey.trim().length > 0;
   const activeVoiceMeta = useMemo(() => getVoiceCatalogEntry(voice.voiceName), [voice.voiceName]);
+
+  const stateRef = useRef<OpenStudyState>(state);
+  stateRef.current = state;
+
+  const toolHandlers = useMemo<HermesToolHandlers>(
+    () => ({
+      onHighlightScreen: () => undefined,
+      onClearSpotlights: () => undefined,
+      onCreateNote: (page) => {
+        onUpsertNote?.(page);
+      },
+      onCreateCards: (cards) => {
+        onAddCards?.(cards);
+      },
+      onAddPlanTasks: (tasks) => {
+        onAddPlanTasks?.(tasks);
+      },
+      onAddSchoolScheduleItems: onAddSchoolScheduleItems
+        ? (items) => {
+            onAddSchoolScheduleItems(items);
+          }
+        : undefined,
+      onNavigate: (view, courseId) => {
+        if (courseId) {
+          onSelectCourse?.(courseId);
+        }
+        onNavigate?.(view);
+      },
+      onSaveMemory: (entry) => {
+        onAddHermesMemory?.(entry);
+      },
+      onSaveSkill: (skill) => {
+        onUpsertHermesSkill?.(skill);
+      },
+      onLogAction: (entry) => {
+        onLogHermesAction?.(entry);
+      },
+      bridgeUrl: bridgeOnline ? normalizedBridgeUrl : undefined,
+    }),
+    [
+      onUpsertNote,
+      onAddCards,
+      onAddPlanTasks,
+      onAddSchoolScheduleItems,
+      onSelectCourse,
+      onNavigate,
+      onAddHermesMemory,
+      onUpsertHermesSkill,
+      onLogHermesAction,
+      bridgeOnline,
+      normalizedBridgeUrl,
+    ]
+  );
+
+  const handlersRef = useRef<HermesToolHandlers>(toolHandlers);
+  handlersRef.current = toolHandlers;
 
   const [connectionState, setConnectionState] = useState<LiveConnectionState>('idle');
   const [statusDetail, setStatusDetail] = useState<string>('');
@@ -206,6 +367,39 @@ export function VoiceTutorDrawer({
         onError: (msg) => {
           setErrorMessage(msg);
         },
+        onToolCall: async (calls) => {
+          const results: Array<{
+            id?: string;
+            name: string;
+            response: Record<string, unknown>;
+          }> = [];
+
+          for (const call of calls) {
+            const res = await executeHermesToolCall(
+              call,
+              stateRef.current,
+              handlersRef.current
+            );
+            results.push({
+              id: res.id,
+              name: res.name,
+              response: res.response,
+            });
+            upsertTranscript({
+              id: `sys-tool-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role: 'system',
+              text: formatVoiceToolTranscriptNote(
+                call.name,
+                res.execution.summary,
+                res.response
+              ),
+              timestamp: Date.now(),
+              finalized: true,
+            });
+          }
+
+          return results;
+        },
       });
     }
     return clientRef.current;
@@ -249,13 +443,17 @@ export function VoiceTutorDrawer({
     stopVoicePreview();
     setPreviewingVoiceId(null);
 
-    const systemPrompt = buildVoiceSystemPrompt({
+    const baseSystemPrompt = buildVoiceSystemPrompt({
       voice,
       activeCourse,
       courseNotes: localCourseNotes,
       obsidianNotes,
       currentViewLabel,
     });
+    const systemPrompt = `${baseSystemPrompt}\n\n${buildVoiceVaultAndToolsPrompt(
+      stateRef.current,
+      bridgeOnline
+    )}`;
 
     const client = getClient();
     await client.connect({
@@ -266,6 +464,7 @@ export function VoiceTutorDrawer({
       languageLock: voice.languageLock,
       pace: voice.pace,
       systemPrompt,
+      tools: [{ functionDeclarations: HERMES_LIVE_FUNCTION_DECLARATIONS }],
     });
   }, [
     provider.geminiApiKey,
@@ -276,6 +475,7 @@ export function VoiceTutorDrawer({
     localCourseNotes,
     obsidianNotes,
     currentViewLabel,
+    bridgeOnline,
     getClient,
   ]);
 
@@ -652,10 +852,16 @@ export function VoiceTutorDrawer({
               <span className="shrink-0 font-mono-num">
                 {localCourseNotes.length} {localCourseNotes.length === 1 ? 'Notiz' : 'Notizen'}
               </span>
-              {selectedObsidianCount > 0 && (
+              {(obsidianNotes.length > 0 ||
+                Boolean(provider.obsidianVaultPath.trim()) ||
+                bridgeOnline) && (
                 <>
                   <span style={{ color: 'var(--border-strong)' }}>·</span>
-                  <span className="shrink-0 font-mono-num">{selectedObsidianCount} Obsidian</span>
+                  <span className="shrink-0 font-mono-num">
+                    {obsidianNotes.length > 0
+                      ? `${obsidianNotes.length} Obsidian`
+                      : 'Obsidian Live'}
+                  </span>
                 </>
               )}
             </div>

@@ -28,6 +28,12 @@ const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CHAT_BODY_BYTES = 512 * 1024;
 const MAX_OUTPUT_BYTES = 512 * 1024;
 const MAX_OBSIDIAN_FILES = 350;
+const MAX_OBSIDIAN_OVERVIEW_FILES = 12_000;
+const MAX_OBSIDIAN_SEARCH_FILES = 8_000;
+const MAX_OBSIDIAN_SEARCH_NOTE_BYTES = 300 * 1024;
+const MAX_OBSIDIAN_READ_BYTES = 512 * 1024;
+const MAX_OBSIDIAN_SEARCH_EXCERPT_CHARS = 420;
+const OBSIDIAN_SEARCH_TIME_BUDGET_MS = 680;
 const MAX_NOTE_BYTES = 256 * 1024;
 const MAX_NOTE_CONTENT_CHARS = 12_000;
 const MAX_EXCERPT_CHARS = 220;
@@ -793,6 +799,813 @@ async function scanObsidianVault(rawDir) {
     truncated: notes.length >= MAX_OBSIDIAN_FILES,
     skippedSensitive,
     notes,
+  };
+}
+
+const OBSIDIAN_MOC_NAME_PATTERN =
+  /^(?:_?moc(?:$|[\s_\-.])|00[_.\-\s]|readme$|index$|dashboard$)|(?:[\s_\-.]moc)$/i;
+const OBSIDIAN_GENERIC_MOC_STEM_PATTERN = /^(?:_?moc|readme|index|dashboard)$/i;
+
+function foldSearchText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss');
+}
+
+function getObsidianTopFolder(relPosix) {
+  const slashIdx = relPosix.indexOf('/');
+  return slashIdx > 0 ? relPosix.slice(0, slashIdx) : '';
+}
+
+function isObsidianMocFileName(fileName) {
+  const stem = String(fileName || '').replace(/\.md$/i, '').trim();
+  return OBSIDIAN_MOC_NAME_PATTERN.test(stem);
+}
+
+function tokenizeObsidianQuery(rawQuery) {
+  const cleaned = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+  if (!cleaned) return [];
+  const rawTokens = cleaned
+    .split(/[\s,;:!?/\\|()[\]{}"']+/)
+    .map((token) => foldSearchText(token).trim())
+    .filter(Boolean);
+
+  const filtered = rawTokens.filter((token) => token.length >= 2);
+  const chosen = filtered.length > 0 ? filtered : rawTokens;
+  return Array.from(new Set(chosen)).slice(0, 12);
+}
+
+function buildTokenLightStems(token) {
+  const stems = [];
+  if (token.length >= 6 && /(?:en|er|es)$/.test(token)) {
+    stems.push(token.slice(0, -2));
+  }
+  if (token.length >= 5 && /[ens]$/.test(token)) {
+    stems.push(token.slice(0, -1));
+  }
+  return stems;
+}
+
+function cleanMarkdownForSnippet(markdownBody) {
+  return String(markdownBody || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '$2')
+    .replace(/\[\[([^\]]+)\]\]/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/[*_`>~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildContextualExcerpt(markdownBody, tokens, rawPhrase, maxChars = MAX_OBSIDIAN_SEARCH_EXCERPT_CHARS) {
+  const plain = cleanMarkdownForSnippet(markdownBody);
+  if (!plain) return '';
+  if (plain.length <= maxChars) return plain;
+
+  const foldedPlain = foldSearchText(plain);
+  const foldedPhrase = foldSearchText(rawPhrase || '').replace(/\s+/g, ' ').trim();
+
+  let hitIdx = -1;
+  if (foldedPhrase.length >= 3) {
+    hitIdx = foldedPlain.indexOf(foldedPhrase);
+  }
+  if (hitIdx < 0 && Array.isArray(tokens) && tokens.length > 0) {
+    // Prefer the longest token match for the most informative context window
+    const sortedTokens = [...tokens].sort((a, b) => b.length - a.length);
+    for (const token of sortedTokens) {
+      const idx = foldedPlain.indexOf(token);
+      if (idx >= 0) {
+        hitIdx = idx;
+        break;
+      }
+    }
+    if (hitIdx < 0) {
+      for (const token of sortedTokens) {
+        for (const stem of buildTokenLightStems(token)) {
+          const idx = foldedPlain.indexOf(stem);
+          if (idx >= 0) {
+            hitIdx = idx;
+            break;
+          }
+        }
+        if (hitIdx >= 0) break;
+      }
+    }
+  }
+
+  // Note: foldedPlain can differ slightly in length from plain when ä/ö/ü/ß expand to 2 chars.
+  // Scale index proportionally back into plain safely.
+  if (hitIdx > 0 && foldedPlain.length > 0 && foldedPlain.length !== plain.length) {
+    hitIdx = Math.min(plain.length - 1, Math.round((hitIdx / foldedPlain.length) * plain.length));
+  }
+
+  if (hitIdx < 0 || hitIdx < Math.floor(maxChars * 0.45)) {
+    let end = maxChars - 1;
+    const lastSpace = plain.lastIndexOf(' ', end);
+    if (lastSpace > maxChars * 0.7) end = lastSpace;
+    return `${plain.slice(0, end).trimEnd()}…`;
+  }
+
+  let start = Math.max(0, hitIdx - 110);
+  if (start > 0) {
+    const nextSpace = plain.indexOf(' ', start);
+    if (nextSpace > 0 && nextSpace < hitIdx && nextSpace - start < 28) {
+      start = nextSpace + 1;
+    }
+  }
+
+  let end = Math.min(plain.length, start + (maxChars - (start > 0 ? 2 : 1)));
+  if (end < plain.length) {
+    const lastSpace = plain.lastIndexOf(' ', end);
+    if (lastSpace > start + maxChars * 0.65) {
+      end = lastSpace;
+    }
+  }
+
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < plain.length ? '…' : '';
+  return `${prefix}${plain.slice(start, end).trim()}${suffix}`;
+}
+
+async function resolveObsidianVaultRoot(rawVaultPath) {
+  let candidatePath = typeof rawVaultPath === 'string' ? rawVaultPath.trim() : '';
+
+  if (!candidatePath) {
+    const detected = await detectObsidianVaults();
+    const preferred = detected.vaults.find((v) => v.isOpen) || detected.vaults[0] || null;
+    if (!preferred || !preferred.path) {
+      throw Object.assign(
+        new Error('Kein Obsidian-Vault angegeben und kein geöffneter Vault gefunden.'),
+        { status: 404 }
+      );
+    }
+    candidatePath = preferred.path;
+  }
+
+  const requestedPath = path.resolve(candidatePath);
+  if (isForbiddenVaultRoot(requestedPath)) {
+    throw Object.assign(
+      new Error('Scanning a system directory or drive root is not allowed. Select your Obsidian vault folder.'),
+      { status: 403 }
+    );
+  }
+
+  let rootRealPath;
+  try {
+    rootRealPath = await fsp.realpath(requestedPath);
+    const stat = await fsp.stat(rootRealPath);
+    if (!stat.isDirectory()) {
+      throw new Error('Not a directory');
+    }
+  } catch {
+    throw Object.assign(new Error('The selected Obsidian vault directory does not exist.'), {
+      status: 404,
+    });
+  }
+
+  return {
+    vaultPath: rootRealPath,
+    vaultName: path.basename(rootRealPath) || rootRealPath,
+  };
+}
+
+function isPathInsideRoot(rootRealPath, candidateRealPath) {
+  const rel = path.relative(rootRealPath, candidateRealPath);
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+async function walkObsidianMarkdownFiles(rootRealPath, maxFiles) {
+  const files = [];
+  const visitedDirs = new Set([rootRealPath]);
+
+  async function walk(currentDir, relPrefix) {
+    if (files.length >= maxFiles) return;
+
+    let entries;
+    try {
+      entries = await fsp.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (files.length >= maxFiles) break;
+
+      const name = entry.name;
+      if (!name || name.startsWith('.') || IGNORED_DIRS.has(name.toLowerCase())) {
+        continue;
+      }
+      if (SENSITIVE_NAME_PATTERN.test(name)) {
+        continue;
+      }
+
+      const relPosix = relPrefix ? `${relPrefix}/${name}` : name;
+      if (isSensitiveRelativePath(relPosix)) {
+        continue;
+      }
+
+      const fullPath = path.join(currentDir, name);
+
+      if (entry.isSymbolicLink()) {
+        let entryRealPath;
+        try {
+          entryRealPath = await fsp.realpath(fullPath);
+        } catch {
+          continue;
+        }
+        if (!isPathInsideRoot(rootRealPath, entryRealPath)) {
+          continue;
+        }
+        const realRelPosix = path.relative(rootRealPath, entryRealPath).split(path.sep).join('/');
+        if (isSensitiveRelativePath(realRelPosix)) {
+          continue;
+        }
+        let targetStat;
+        try {
+          targetStat = await fsp.stat(entryRealPath);
+        } catch {
+          continue;
+        }
+        if (targetStat.isDirectory()) {
+          if (visitedDirs.has(entryRealPath)) continue;
+          visitedDirs.add(entryRealPath);
+          await walk(entryRealPath, relPosix);
+          continue;
+        }
+        if (!targetStat.isFile() || !name.toLowerCase().endsWith('.md')) {
+          continue;
+        }
+        files.push({
+          fullPath: entryRealPath,
+          relPosix,
+          fileName: name,
+          stem: name.slice(0, -3),
+          folder: getObsidianTopFolder(relPosix),
+        });
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        await walk(fullPath, relPosix);
+        continue;
+      }
+
+      if (!entry.isFile() || !name.toLowerCase().endsWith('.md')) {
+        continue;
+      }
+
+      files.push({
+        fullPath,
+        relPosix,
+        fileName: name,
+        stem: name.slice(0, -3),
+        folder: getObsidianTopFolder(relPosix),
+      });
+    }
+  }
+
+  await walk(rootRealPath, '');
+  return files;
+}
+
+async function getObsidianVaultOverview(rawVaultPath) {
+  const { vaultPath, vaultName } = await resolveObsidianVaultRoot(rawVaultPath);
+  const entries = await walkObsidianMarkdownFiles(vaultPath, MAX_OBSIDIAN_OVERVIEW_FILES);
+
+  const folderCounts = new Map();
+  const mocCandidates = [];
+
+  for (const item of entries) {
+    const folderKey = item.folder || '(Root)';
+    folderCounts.set(folderKey, (folderCounts.get(folderKey) || 0) + 1);
+
+    if (isObsidianMocFileName(item.fileName)) {
+      const depth = item.relPosix.split('/').length;
+      const displayTitle =
+        item.folder && OBSIDIAN_GENERIC_MOC_STEM_PATTERN.test(item.stem)
+          ? `${item.folder}/${item.stem}`
+          : item.stem;
+      mocCandidates.push({
+        depth,
+        path: item.relPosix,
+        title: displayTitle,
+      });
+    }
+  }
+
+  // Fast batched stat-only pass to collect the 20 most recently modified notes without reading file bodies
+  const recentCandidates = [];
+  const STAT_BATCH_SIZE = 32;
+  for (let i = 0; i < entries.length; i += STAT_BATCH_SIZE) {
+    const batch = entries.slice(i, i + STAT_BATCH_SIZE);
+    const stats = await Promise.all(
+      batch.map(async (item) => {
+        try {
+          const st = await fsp.stat(item.fullPath);
+          if (!st.isFile()) return null;
+          return {
+            path: item.relPosix,
+            title: item.stem,
+            folder: item.folder,
+            mtimeMs: st.mtimeMs,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+    for (const st of stats) {
+      if (st) recentCandidates.push(st);
+    }
+  }
+
+  recentCandidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const recentNotes = recentCandidates.slice(0, 20).map((item) => ({
+    path: item.path,
+    title: item.title,
+    folder: item.folder,
+    updatedAt: new Date(item.mtimeMs).toISOString(),
+  }));
+
+  const folders = Array.from(folderCounts.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.name.localeCompare(b.name);
+    })
+    .slice(0, 30);
+
+  mocCandidates.sort((a, b) => {
+    if (a.depth !== b.depth) return a.depth - b.depth;
+    return a.path.localeCompare(b.path);
+  });
+  const mocNotes = [];
+  const seenMocTitles = new Set();
+  for (const moc of mocCandidates) {
+    if (seenMocTitles.has(moc.title)) continue;
+    seenMocTitles.add(moc.title);
+    mocNotes.push(moc.title);
+    if (mocNotes.length >= 20) break;
+  }
+
+  return {
+    ok: true,
+    vaultPath,
+    vaultName,
+    totalNotes: entries.length,
+    folders,
+    mocNotes,
+    recentNotes,
+  };
+}
+
+function matchesObsidianFolderFilter(item, rawFolderFilter) {
+  if (!rawFolderFilter) return true;
+  const trimmed = rawFolderFilter.trim();
+  if (!trimmed) return true;
+  if (trimmed === '/' || trimmed.toLowerCase() === '(root)') {
+    return item.folder === '';
+  }
+
+  const normalized = foldSearchText(trimmed.replace(/\\/g, '/').replace(/^\/+|\/+$/g, ''));
+  if (!normalized) return true;
+
+  const foldedRel = foldSearchText(item.relPosix);
+  const foldedTop = foldSearchText(item.folder);
+  const lastSlash = foldedRel.lastIndexOf('/');
+  const foldedDir = lastSlash >= 0 ? foldedRel.slice(0, lastSlash) : '';
+
+  return (
+    foldedTop === normalized ||
+    foldedRel.startsWith(`${normalized}/`) ||
+    foldedDir.includes(normalized)
+  );
+}
+
+function scoreObsidianPathMatch(item, tokens, foldedPhrase) {
+  const foldedStem = foldSearchText(item.stem);
+  const foldedRel = foldSearchText(item.relPosix);
+  const lastSlash = foldedRel.lastIndexOf('/');
+  const foldedDir = lastSlash >= 0 ? foldedRel.slice(0, lastSlash) : '';
+
+  let score = 0;
+  let matchedTokenCount = 0;
+
+  for (const token of tokens) {
+    let tokenMatched = false;
+    if (foldedStem === token) {
+      score += 100;
+      tokenMatched = true;
+    } else if (foldedStem.startsWith(token)) {
+      score += 62;
+      tokenMatched = true;
+    } else if (foldedStem.includes(token)) {
+      score += 48;
+      tokenMatched = true;
+    }
+
+    if (foldedDir && foldedDir.includes(token)) {
+      score += 34;
+      tokenMatched = true;
+    }
+
+    if (!tokenMatched) {
+      const stems = buildTokenLightStems(token);
+      for (const stem of stems) {
+        if (foldedStem.includes(stem)) {
+          score += 24;
+          tokenMatched = true;
+          break;
+        }
+        if (foldedDir && foldedDir.includes(stem)) {
+          score += 18;
+          tokenMatched = true;
+          break;
+        }
+      }
+    }
+
+    if (tokenMatched) matchedTokenCount += 1;
+  }
+
+  if (score > 0) {
+    if (foldedPhrase.length >= 3 && (foldedStem.includes(foldedPhrase) || foldedRel.includes(foldedPhrase))) {
+      score += 36;
+    }
+    if (tokens.length > 1 && matchedTokenCount === tokens.length) {
+      score += 32;
+    }
+    if (isObsidianMocFileName(item.fileName)) {
+      score += 8;
+    }
+  }
+
+  return { score, matchedTokenCount };
+}
+
+function countTokenHitsInFoldedText(foldedText, token, maxHits = 8) {
+  let count = 0;
+  let pos = 0;
+  while (count < maxHits) {
+    const idx = foldedText.indexOf(token, pos);
+    if (idx < 0) break;
+    count += 1;
+    pos = idx + token.length;
+  }
+  return count;
+}
+
+async function safeReadVaultMarkdownFile(vaultPath, item, maxBytes) {
+  let realFilePath;
+  try {
+    realFilePath = await fsp.realpath(item.fullPath);
+  } catch {
+    return { status: 'error' };
+  }
+  if (!isPathInsideRoot(vaultPath, realFilePath)) {
+    return { status: 'blocked' };
+  }
+  const realRelPosix = path.relative(vaultPath, realFilePath).split(path.sep).join('/');
+  if (isSensitiveRelativePath(realRelPosix)) {
+    return { status: 'blocked' };
+  }
+  try {
+    const st = await fsp.stat(realFilePath);
+    if (!st.isFile()) {
+      return { status: 'error' };
+    }
+    if (st.size > maxBytes) {
+      return { status: 'oversized' };
+    }
+    const rawText = await fsp.readFile(realFilePath, 'utf8');
+    return { status: 'ok', rawText, mtimeMs: st.mtimeMs };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
+async function searchObsidianVault(rawVaultPath, rawQuery, rawFolder, rawLimit) {
+  const searchStartedAt = Date.now();
+  const contentDeadline = searchStartedAt + OBSIDIAN_SEARCH_TIME_BUDGET_MS;
+
+  const { vaultPath, vaultName } = await resolveObsidianVaultRoot(rawVaultPath);
+  const query = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+  const folder = typeof rawFolder === 'string' ? rawFolder.trim() : '';
+  const parsedLimit = Number(rawLimit);
+  const limit = Number.isFinite(parsedLimit)
+    ? Math.min(50, Math.max(1, Math.round(parsedLimit)))
+    : 12;
+
+  const allEntries = await walkObsidianMarkdownFiles(vaultPath, MAX_OBSIDIAN_SEARCH_FILES);
+  const scopedEntries = folder
+    ? allEntries.filter((item) => matchesObsidianFolderFilter(item, folder))
+    : allEntries;
+
+  const tokens = tokenizeObsidianQuery(query);
+  const foldedPhrase = foldSearchText(query).replace(/\s+/g, ' ').trim();
+
+  // Folder listing mode when query is empty
+  if (tokens.length === 0) {
+    const sorted = [...scopedEntries].sort((a, b) => {
+      const aMoc = isObsidianMocFileName(a.fileName) ? 1 : 0;
+      const bMoc = isObsidianMocFileName(b.fileName) ? 1 : 0;
+      if (aMoc !== bMoc) return bMoc - aMoc;
+      return a.relPosix.localeCompare(b.relPosix);
+    });
+
+    const results = [];
+    let skippedCount = 0;
+    for (const item of sorted) {
+      if (results.length >= limit) break;
+      const readRes = await safeReadVaultMarkdownFile(vaultPath, item, MAX_OBSIDIAN_SEARCH_NOTE_BYTES);
+      if (readRes.status === 'oversized' || readRes.status === 'blocked') {
+        skippedCount += 1;
+        continue;
+      }
+      const body = readRes.status === 'ok' ? stripFrontmatter(readRes.rawText) : '';
+      const title = readRes.status === 'ok' ? extractNoteTitle(body, item.fileName) : item.stem;
+      const excerpt =
+        readRes.status === 'ok'
+          ? buildContextualExcerpt(body, [], '', MAX_OBSIDIAN_SEARCH_EXCERPT_CHARS)
+          : '';
+      results.push({
+        path: item.relPosix,
+        title,
+        folder: item.folder,
+        score: isObsidianMocFileName(item.fileName) ? 60 : 50,
+        excerpt,
+      });
+    }
+
+    return {
+      ok: true,
+      vaultName,
+      query,
+      totalMatches: Math.max(results.length, scopedEntries.length - skippedCount),
+      results,
+    };
+  }
+
+  // Phase 1: Instant filename + folder path scoring across all scoped notes
+  const pathScored = [];
+  const nonPathEntries = [];
+  for (const item of scopedEntries) {
+    const { score, matchedTokenCount } = scoreObsidianPathMatch(item, tokens, foldedPhrase);
+    if (score > 0) {
+      pathScored.push({
+        item,
+        score,
+        matchedTokenCount,
+        title: item.stem,
+        excerpt: '',
+        scanned: false,
+      });
+    } else {
+      nonPathEntries.push(item);
+    }
+  }
+
+  pathScored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.item.relPosix.length - b.item.relPosix.length;
+  });
+
+  const matchedByPath = new Map();
+  for (const entry of pathScored) {
+    matchedByPath.set(entry.item.relPosix, entry);
+  }
+
+  const scoreAndReadContent = async (item, basePathScore, baseMatchedTokens) => {
+    const readRes = await safeReadVaultMarkdownFile(vaultPath, item, MAX_OBSIDIAN_SEARCH_NOTE_BYTES);
+    if (readRes.status === 'oversized' || readRes.status === 'blocked') {
+      return { drop: true, path: item.relPosix };
+    }
+    if (readRes.status !== 'ok') return null;
+
+    const body = stripFrontmatter(readRes.rawText);
+    const title = extractNoteTitle(body, item.fileName);
+    const foldedTitle = foldSearchText(title);
+    const foldedBody = foldSearchText(body);
+
+    let contentScore = 0;
+    let combinedTokenHits = 0;
+
+    for (const token of tokens) {
+      let tokenSeen = false;
+      if (foldedTitle !== foldSearchText(item.stem) && foldedTitle.includes(token)) {
+        contentScore += 32;
+        tokenSeen = true;
+      }
+      const hits = countTokenHitsInFoldedText(foldedBody, token, 8);
+      if (hits > 0) {
+        contentScore += 16 + Math.min(hits - 1, 5) * 2;
+        tokenSeen = true;
+      } else if (!tokenSeen) {
+        for (const stem of buildTokenLightStems(token)) {
+          const stemHits = countTokenHitsInFoldedText(foldedBody, stem, 4);
+          if (stemHits > 0) {
+            contentScore += 9 + Math.min(stemHits - 1, 3);
+            tokenSeen = true;
+            break;
+          }
+        }
+      }
+      if (tokenSeen) combinedTokenHits += 1;
+    }
+
+    if (foldedPhrase.length >= 3 && foldedBody.includes(foldedPhrase)) {
+      contentScore += 24;
+    }
+    if (tokens.length > 1 && combinedTokenHits === tokens.length) {
+      contentScore += 20;
+    }
+
+    const totalScore = basePathScore + contentScore;
+    if (totalScore <= 0) return null;
+
+    const excerpt = buildContextualExcerpt(
+      body,
+      tokens,
+      query,
+      MAX_OBSIDIAN_SEARCH_EXCERPT_CHARS
+    );
+
+    return {
+      item,
+      score: totalScore,
+      matchedTokenCount: Math.max(baseMatchedTokens, combinedTokenHits),
+      title,
+      excerpt,
+      scanned: true,
+    };
+  };
+
+  // Phase 2A: Enrich top path/title matches with real H1 title, content score boost & contextual snippet
+  const topPathEnrichCount = Math.min(pathScored.length, Math.max(limit * 3, 36));
+  const CONTENT_BATCH_SIZE = 16;
+  for (let i = 0; i < topPathEnrichCount; i += CONTENT_BATCH_SIZE) {
+    if (Date.now() >= contentDeadline && i >= limit) break;
+    const batch = pathScored.slice(i, Math.min(i + CONTENT_BATCH_SIZE, topPathEnrichCount));
+    const enriched = await Promise.all(
+      batch.map((entry) => scoreAndReadContent(entry.item, entry.score, entry.matchedTokenCount))
+    );
+    for (let j = 0; j < batch.length; j += 1) {
+      const updated = enriched[j];
+      if (!updated) continue;
+      if (updated.drop) {
+        matchedByPath.delete(updated.path);
+      } else {
+        matchedByPath.set(updated.item.relPosix, updated);
+      }
+    }
+  }
+
+  // Phase 2B: Scan file bodies of non-path-matched notes while inside strict <800ms time budget
+  // (Prioritize MOC/index notes first, then remaining files in batches of 16)
+  if (nonPathEntries.length > 0 && Date.now() < contentDeadline) {
+    const prioritizedBodyQueue = [...nonPathEntries].sort((a, b) => {
+      const aMoc = isObsidianMocFileName(a.fileName) ? 1 : 0;
+      const bMoc = isObsidianMocFileName(b.fileName) ? 1 : 0;
+      if (aMoc !== bMoc) return bMoc - aMoc;
+      return a.relPosix.length - b.relPosix.length;
+    });
+
+    for (let i = 0; i < prioritizedBodyQueue.length; i += CONTENT_BATCH_SIZE) {
+      if (Date.now() >= contentDeadline) break;
+      const batch = prioritizedBodyQueue.slice(i, i + CONTENT_BATCH_SIZE);
+      const scanned = await Promise.all(
+        batch.map((item) => scoreAndReadContent(item, 0, 0))
+      );
+      for (const hit of scanned) {
+        if (hit && !hit.drop && hit.score > 0) {
+          matchedByPath.set(hit.item.relPosix, hit);
+        }
+      }
+    }
+  }
+
+  const allMatches = Array.from(matchedByPath.values()).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.item.relPosix.localeCompare(b.item.relPosix);
+  });
+
+  const topResults = allMatches.slice(0, limit);
+  return {
+    ok: true,
+    vaultName,
+    query,
+    totalMatches: allMatches.length,
+    results: topResults.map((entry) => ({
+      path: entry.item.relPosix,
+      title: entry.title,
+      folder: entry.item.folder,
+      score: Math.round(entry.score),
+      excerpt: entry.excerpt,
+    })),
+  };
+}
+
+async function readObsidianNote(rawVaultPath, rawRelPath) {
+  const { vaultPath } = await resolveObsidianVaultRoot(rawVaultPath);
+
+  if (typeof rawRelPath !== 'string' || !rawRelPath.trim()) {
+    throw Object.assign(new Error('Parameter "relPath" is required.'), { status: 400 });
+  }
+  const trimmedRel = rawRelPath.trim();
+  if (trimmedRel.length > 500 || trimmedRel.includes('\0')) {
+    throw Object.assign(new Error('Invalid "relPath" parameter.'), { status: 400 });
+  }
+
+  const normalizedRel = trimmedRel.replace(/\\/g, '/').replace(/^\/+/, '');
+  const segments = normalizedRel.split('/');
+  if (
+    !normalizedRel ||
+    segments.some(
+      (seg) =>
+        !seg ||
+        seg === '.' ||
+        seg === '..' ||
+        seg.startsWith('.') ||
+        IGNORED_DIRS.has(seg.toLowerCase())
+    )
+  ) {
+    throw Object.assign(new Error('Invalid or forbidden note path.'), { status: 403 });
+  }
+
+  if (!normalizedRel.toLowerCase().endsWith('.md')) {
+    throw Object.assign(new Error('Only Markdown (.md) notes can be read.'), { status: 400 });
+  }
+
+  if (isSensitiveRelativePath(normalizedRel)) {
+    throw Object.assign(
+      new Error('Reading sensitive or credential-like files is blocked.'),
+      { status: 403 }
+    );
+  }
+
+  const candidatePath = path.resolve(vaultPath, ...segments);
+  if (!isPathInsideRoot(vaultPath, candidatePath)) {
+    throw Object.assign(new Error('Path traversal outside the Obsidian vault is blocked.'), {
+      status: 403,
+    });
+  }
+
+  let fileRealPath;
+  try {
+    fileRealPath = await fsp.realpath(candidatePath);
+  } catch {
+    throw Object.assign(new Error('The requested Obsidian note does not exist.'), { status: 404 });
+  }
+
+  if (!isPathInsideRoot(vaultPath, fileRealPath)) {
+    throw Object.assign(new Error('Symlink escape outside the Obsidian vault is blocked.'), {
+      status: 403,
+    });
+  }
+
+  const finalRelPosix = path.relative(vaultPath, fileRealPath).split(path.sep).join('/');
+  const finalSegments = finalRelPosix.split('/');
+  if (
+    !finalRelPosix.toLowerCase().endsWith('.md') ||
+    finalSegments.some((seg) => seg.startsWith('.') || IGNORED_DIRS.has(seg.toLowerCase())) ||
+    isSensitiveRelativePath(finalRelPosix)
+  ) {
+    throw Object.assign(new Error('Access to this file path is blocked.'), { status: 403 });
+  }
+
+  let stat;
+  try {
+    stat = await fsp.stat(fileRealPath);
+  } catch {
+    throw Object.assign(new Error('Could not stat the requested Obsidian note.'), { status: 404 });
+  }
+  if (!stat.isFile()) {
+    throw Object.assign(new Error('Requested path is not a file.'), { status: 400 });
+  }
+  if (stat.size > MAX_OBSIDIAN_READ_BYTES) {
+    throw Object.assign(new Error('The requested note exceeds the maximum readable size.'), {
+      status: 413,
+    });
+  }
+
+  const rawText = await fsp.readFile(fileRealPath, 'utf8');
+  const body = stripFrontmatter(rawText);
+  const title = extractNoteTitle(body, path.basename(fileRealPath));
+  const content =
+    rawText.length > MAX_NOTE_CONTENT_CHARS
+      ? rawText.slice(0, MAX_NOTE_CONTENT_CHARS)
+      : rawText;
+
+  return {
+    ok: true,
+    path: finalRelPosix,
+    title,
+    content,
   };
 }
 
@@ -3807,6 +4620,315 @@ async function inspectTargetLoginState(port, target) {
   };
 }
 
+const PORTAL_LAUNCH_PS_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  '$exe = $env:OPENSTUDY_BROWSER_EXE',
+  '$rawArgs = $env:OPENSTUDY_BROWSER_ARGS_JSON | ConvertFrom-Json',
+  '$argList = [string[]]@(foreach ($item in $rawArgs) {',
+  '  $s = [string]$item',
+  '  if ($s -match \'[\\s"]\') {',
+  '    $escaped = $s -replace \'(\\\\*)"\', \'$1$1\\"\'',
+  '    $escaped = $escaped -replace \'(\\\\+)$\', \'$1$1\'',
+  '    \'"\' + $escaped + \'"\'',
+  '  } else {',
+  '    $s',
+  '  }',
+  '})',
+  '$p = Start-Process -FilePath $exe -ArgumentList $argList -WindowStyle Normal -PassThru',
+  'if ($p -and $p.Id) { Write-Output $p.Id }',
+].join('\n');
+
+const PORTAL_LAUNCH_PS_B64 = Buffer.from(PORTAL_LAUNCH_PS_SCRIPT, 'utf16le').toString('base64');
+
+const PORTAL_FOREGROUND_PS_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  '$targetPid = 0',
+  '[void][int]::TryParse($env:OPENSTUDY_BROWSER_PID, [ref]$targetPid)',
+  '$exeName = [string]$env:OPENSTUDY_BROWSER_EXE_NAME',
+  '$csharp = @"',
+  'using System;',
+  'using System.Runtime.InteropServices;',
+  'public static class OpenStudyPortalWin32 {',
+  '    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);',
+  '    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
+  '    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);',
+  '    [DllImport("user32.dll", SetLastError = true)]',
+  '    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);',
+  '    public static void NudgeToFront(IntPtr hWnd) {',
+  '        if (hWnd == IntPtr.Zero) return;',
+  '        ShowWindow(hWnd, 9);',
+  '        SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040);',
+  '        SetWindowPos(hWnd, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040);',
+  '        BringWindowToTop(hWnd);',
+  '        SetForegroundWindow(hWnd);',
+  '    }',
+  '}',
+  '"@',
+  'Add-Type -TypeDefinition $csharp -ErrorAction SilentlyContinue',
+  '$hwnd = [IntPtr]::Zero',
+  'if ($targetPid -gt 0) {',
+  '  for ($i = 0; $i -lt 6; $i++) {',
+  '    $p = Get-Process -Id $targetPid -ErrorAction SilentlyContinue',
+  '    if ($p) {',
+  '      $p.Refresh()',
+  '      if ($p.MainWindowHandle -ne [IntPtr]::Zero) {',
+  '        $hwnd = $p.MainWindowHandle',
+  '        break',
+  '      }',
+  '    }',
+  '    Start-Sleep -Milliseconds 50',
+  '  }',
+  '}',
+  'if ($hwnd -eq [IntPtr]::Zero -and $exeName) {',
+  '  $cutoff = (Get-Date).AddSeconds(-15)',
+  '  $cand = Get-Process -Name $exeName -ErrorAction SilentlyContinue |',
+  '    Where-Object {',
+  '      $_.MainWindowHandle -ne [IntPtr]::Zero -and (try { $_.StartTime -ge $cutoff } catch { $false })',
+  '    } |',
+  '    Sort-Object { try { $_.StartTime } catch { [datetime]::MinValue } } -Descending |',
+  '    Select-Object -First 1',
+  '  if ($cand) { $hwnd = $cand.MainWindowHandle }',
+  '}',
+  'if ($hwnd -ne [IntPtr]::Zero) {',
+  '  [OpenStudyPortalWin32]::NudgeToFront($hwnd)',
+  '}',
+].join('\n');
+
+const PORTAL_FOREGROUND_PS_B64 = Buffer.from(PORTAL_FOREGROUND_PS_SCRIPT, 'utf16le').toString('base64');
+
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return Boolean(err && err.code === 'EPERM');
+  }
+}
+
+function runWindowsTaskkill(pid, timeoutMs = 2_000) {
+  if (process.platform !== 'win32' || !Number.isInteger(pid) || pid <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    let killer;
+    try {
+      killer = spawn('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+        shell: false,
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+    } catch {
+      done();
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        killer.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+      done();
+    }, timeoutMs);
+    killer.on('error', done);
+    killer.on('exit', done);
+  });
+}
+
+function launchWindowsVisibleBrowser(executablePath, spawnArgs) {
+  return new Promise((resolve, reject) => {
+    let psChild;
+    try {
+      psChild = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-EncodedCommand',
+          PORTAL_LAUNCH_PS_B64,
+        ],
+        {
+          shell: false,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...process.env,
+            OPENSTUDY_BROWSER_EXE: executablePath,
+            OPENSTUDY_BROWSER_ARGS_JSON: JSON.stringify(spawnArgs),
+          },
+        }
+      );
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let settled = false;
+
+    const finish = (err, pid) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) {
+        reject(err);
+      } else {
+        resolve({ pid });
+      }
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        psChild.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      finish(new Error('Zeitüberschreitung beim Starten des sichtbaren Browser-Fensters.'));
+    }, 6_000);
+
+    psChild.stdout.on('data', (chunk) => {
+      if (stdoutChunks.length < 16) stdoutChunks.push(chunk);
+    });
+    psChild.stderr.on('data', (chunk) => {
+      if (stderrChunks.length < 16) stderrChunks.push(chunk);
+    });
+    psChild.on('error', (err) => finish(err));
+    psChild.on('close', (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim();
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim();
+      const pidMatch = stdout.match(/\b(\d+)\b/);
+      const pid = pidMatch ? Number(pidMatch[1]) : null;
+      if (code === 0 && Number.isInteger(pid) && pid > 0) {
+        finish(null, pid);
+        return;
+      }
+      finish(new Error(stderr || `PowerShell-Browserstart fehlgeschlagen (Code ${code ?? 'unbekannt'}).`));
+    });
+  });
+}
+
+function nudgeWindowsBrowserToFront(pid, executablePath) {
+  if (process.platform !== 'win32') return Promise.resolve();
+  const exeName = path.basename(String(executablePath || ''), '.exe');
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    let psChild;
+    try {
+      psChild = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
+          '-EncodedCommand',
+          PORTAL_FOREGROUND_PS_B64,
+        ],
+        {
+          shell: false,
+          windowsHide: true,
+          stdio: 'ignore',
+          env: {
+            ...process.env,
+            OPENSTUDY_BROWSER_PID: Number.isInteger(pid) && pid > 0 ? String(pid) : '',
+            OPENSTUDY_BROWSER_EXE_NAME: exeName,
+          },
+        }
+      );
+    } catch {
+      done();
+      return;
+    }
+    const timer = setTimeout(() => {
+      try {
+        psChild.kill('SIGTERM');
+      } catch {
+        // ignore
+      }
+      done();
+    }, 2_500);
+    psChild.on('error', done);
+    psChild.on('close', done);
+  });
+}
+
+async function bringPortalWindowToFront(session, primaryTarget) {
+  // 1. Best-effort CDP Page.bringToFront + Browser.getWindowForTarget -> Browser.setWindowBounds
+  try {
+    if (primaryTarget?.webSocketDebuggerUrl) {
+      const pageClient = new NativeCdpClient(primaryTarget.webSocketDebuggerUrl, session.port);
+      try {
+        await pageClient.connect(1_500);
+        await pageClient.send('Page.bringToFront', {}, 1_500).catch(() => {});
+      } finally {
+        pageClient.close();
+      }
+    }
+  } catch {
+    // best-effort
+  }
+
+  try {
+    const versionInfo = await fetchLoopbackJson(session.port, '/json/version', 1_200);
+    const browserWsUrl = versionInfo?.webSocketDebuggerUrl;
+    if (typeof browserWsUrl === 'string' && browserWsUrl.startsWith(`ws://${HOST}:${session.port}/`)) {
+      const browserClient = new NativeCdpClient(browserWsUrl, session.port);
+      try {
+        await browserClient.connect(1_500);
+        const targetId = typeof primaryTarget?.id === 'string' ? primaryTarget.id : '';
+        const winInfo = await browserClient
+          .send('Browser.getWindowForTarget', targetId ? { targetId } : {}, 1_500)
+          .catch(() => null);
+        const windowId = winInfo?.windowId;
+        if (typeof windowId === 'number') {
+          await browserClient
+            .send(
+              'Browser.setWindowBounds',
+              { windowId, bounds: { windowState: 'normal' } },
+              1_500
+            )
+            .catch(() => {});
+          await browserClient
+            .send(
+              'Browser.setWindowBounds',
+              {
+                windowId,
+                bounds: { windowState: 'normal', left: 100, top: 60, width: 1200, height: 840 },
+              },
+              1_500
+            )
+            .catch(() => {});
+        }
+      } finally {
+        browserClient.close();
+      }
+    }
+  } catch {
+    // best-effort
+  }
+
+  // 2. On Windows, also run a fast Win32 ShowWindow(SW_RESTORE) + SetForegroundWindow nudge
+  if (process.platform === 'win32') {
+    await nudgeWindowsBrowserToFront(session.browserPid, session.executablePath).catch(() => {});
+  }
+}
+
 async function closeActivePortalSession(options = {}) {
   const session = activePortalSession;
   if (!session) {
@@ -3838,40 +4960,77 @@ async function closeActivePortalSession(options = {}) {
     }
   }
 
-  const waitUntilExited = (ms) =>
-    new Promise((resolve) => {
-      if (session.exited || session.child.exitCode !== null) {
-        resolve(true);
-        return;
+  const waitUntilExited = (ms) => {
+    if (session.child) {
+      return new Promise((resolve) => {
+        if (session.exited || session.child.exitCode !== null) {
+          resolve(true);
+          return;
+        }
+        const onExit = () => {
+          clearTimeout(timer);
+          resolve(true);
+        };
+        const timer = setTimeout(() => {
+          session.child.off('exit', onExit);
+          resolve(false);
+        }, ms);
+        session.child.once('exit', onExit);
+      });
+    }
+
+    if (!Number.isInteger(session.browserPid) || session.browserPid <= 0) {
+      return Promise.resolve(true);
+    }
+
+    return (async () => {
+      const waitDeadline = Date.now() + ms;
+      while (Date.now() < waitDeadline) {
+        if (session.exited || !isProcessAlive(session.browserPid)) {
+          return true;
+        }
+        await sleep(100);
       }
-      const onExit = () => {
-        clearTimeout(timer);
-        resolve(true);
-      };
-      const timer = setTimeout(() => {
-        session.child.off('exit', onExit);
-        resolve(false);
-      }, ms);
-      session.child.once('exit', onExit);
-    });
+      return !isProcessAlive(session.browserPid);
+    })();
+  };
 
   const exitedGracefully = await waitUntilExited(options.quick ? 500 : 2_000);
   if (!exitedGracefully && !session.exited) {
-    try {
-      session.child.kill('SIGTERM');
-    } catch {
-      // ignore
-    }
-    const exitedAfterTerm = await waitUntilExited(options.quick ? 400 : 1_200);
-    if (!exitedAfterTerm && !session.exited) {
+    if (session.child) {
       try {
-        session.child.kill('SIGKILL');
+        session.child.kill('SIGTERM');
       } catch {
         // ignore
+      }
+      const exitedAfterTerm = await waitUntilExited(options.quick ? 400 : 1_200);
+      if (!exitedAfterTerm && !session.exited) {
+        try {
+          session.child.kill('SIGKILL');
+        } catch {
+          // ignore
+        }
+      }
+    } else if (process.platform === 'win32' && Number.isInteger(session.browserPid) && session.browserPid > 0) {
+      await runWindowsTaskkill(session.browserPid, options.quick ? 800 : 2_000);
+    } else if (Number.isInteger(session.browserPid) && session.browserPid > 0) {
+      try {
+        process.kill(session.browserPid, 'SIGTERM');
+      } catch {
+        // ignore
+      }
+      const exitedAfterTerm = await waitUntilExited(options.quick ? 400 : 1_200);
+      if (!exitedAfterTerm) {
+        try {
+          process.kill(session.browserPid, 'SIGKILL');
+        } catch {
+          // ignore
+        }
       }
     }
   }
 
+  session.exited = true;
   return { ok: true, closed: true };
 }
 
@@ -3915,18 +5074,28 @@ async function startPortalSession(rawPortalUrl) {
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-default-apps',
+    '--window-size=1200,840',
+    '--window-position=100,60',
     '--new-window',
     checkedUrl.url,
   ];
 
-  let child;
+  let child = null;
+  let browserPid = null;
   try {
-    child = spawn(browser.executablePath, spawnArgs, {
-      shell: false,
-      windowsHide: false,
-      detached: false,
-      stdio: 'ignore',
-    });
+    if (process.platform === 'win32') {
+      // Launch via Start-Process -WindowStyle Normal to break SW_HIDE inheritance from hidden bridge daemons.
+      const launched = await launchWindowsVisibleBrowser(browser.executablePath, spawnArgs);
+      browserPid = launched.pid;
+    } else {
+      child = spawn(browser.executablePath, spawnArgs, {
+        shell: false,
+        detached: true,
+        stdio: 'ignore',
+      });
+      browserPid = child.pid || null;
+      child.unref();
+    }
   } catch (err) {
     throw Object.assign(
       new Error(`Portal-Browser (${browser.browserName}) konnte nicht gestartet werden: ${err.message}`),
@@ -3939,24 +5108,28 @@ async function startPortalSession(rawPortalUrl) {
     sessionId,
     port,
     browserName: browser.browserName,
+    executablePath: browser.executablePath,
     portalUrl: checkedUrl.url,
     origin: checkedUrl.origin,
     child,
+    browserPid,
     startedAt: Date.now(),
     exited: false,
     extracting: false,
   };
 
-  child.on('exit', () => {
-    session.exited = true;
-    if (activePortalSession && activePortalSession.sessionId === sessionId) {
-      activePortalSession = null;
-    }
-  });
+  if (child) {
+    child.on('exit', () => {
+      session.exited = true;
+      if (activePortalSession && activePortalSession.sessionId === sessionId) {
+        activePortalSession = null;
+      }
+    });
 
-  child.on('error', () => {
-    session.exited = true;
-  });
+    child.on('error', () => {
+      session.exited = true;
+    });
+  }
 
   activePortalSession = session;
 
@@ -3988,8 +5161,8 @@ async function startPortalSession(rawPortalUrl) {
     );
   }
 
-  // Give initial page a brief moment to start resolving title/login state
-  await sleep(650);
+  // Bring browser window visibly to foreground (CDP + Win32 nudge on Windows) while page resolves
+  await Promise.all([sleep(650), bringPortalWindowToFront(session, primaryTarget)]);
   const refreshedTargets = (await listCdpTargets(port, 1_500)) || [];
   const latestTarget = selectPrimaryPageTarget(refreshedTargets, checkedUrl.origin) || primaryTarget;
   const inspected = await inspectTargetLoginState(port, latestTarget);
@@ -4021,7 +5194,11 @@ async function getPortalSessionStatus(rawSessionId) {
 
   const targets = await listCdpTargets(session.port, 2_000);
   if (!targets || targets.length === 0) {
-    if (session.exited || session.child.exitCode !== null) {
+    const processExited = session.child
+      ? session.child.exitCode !== null
+      : !isProcessAlive(session.browserPid);
+    if (session.exited || processExited) {
+      session.exited = true;
       activePortalSession = null;
     }
     return {
@@ -5468,6 +6645,64 @@ async function handleRequest(req, res) {
       sendJson(res, err.status || 500, {
         ok: false,
         error: err.message || 'Could not scan Obsidian directory.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/obsidian/overview') {
+    try {
+      const vaultPath =
+        parsedUrl.searchParams.get('vaultPath') ||
+        parsedUrl.searchParams.get('dir') ||
+        '';
+      const result = await getObsidianVaultOverview(vaultPath);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not load Obsidian vault overview.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/obsidian/search') {
+    try {
+      const vaultPath =
+        parsedUrl.searchParams.get('vaultPath') ||
+        parsedUrl.searchParams.get('dir') ||
+        '';
+      const q = parsedUrl.searchParams.get('q') || '';
+      const folder = parsedUrl.searchParams.get('folder') || '';
+      const limit = parsedUrl.searchParams.get('limit') || '12';
+      const result = await searchObsidianVault(vaultPath, q, folder, limit);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not search Obsidian vault.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/obsidian/read') {
+    try {
+      const vaultPath =
+        parsedUrl.searchParams.get('vaultPath') ||
+        parsedUrl.searchParams.get('dir') ||
+        '';
+      const relPath =
+        parsedUrl.searchParams.get('relPath') ||
+        parsedUrl.searchParams.get('path') ||
+        '';
+      const result = await readObsidianNote(vaultPath, relPath);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Could not read Obsidian note.',
       });
     }
     return;
