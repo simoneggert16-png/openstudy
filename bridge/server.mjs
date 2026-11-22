@@ -12,6 +12,7 @@
  */
 
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -55,6 +56,20 @@ const MAX_SCREENSHOT_STDOUT_BYTES = 10 * 1024 * 1024;
 const HIGHLIGHT_MIN_DURATION_MS = 1_500;
 const HIGHLIGHT_MAX_DURATION_MS = 7_000;
 const HIGHLIGHT_DEFAULT_DURATION_MS = 4_500;
+
+const PORTAL_DEFAULT_HORIZON_DAYS = 90;
+const PORTAL_MIN_HORIZON_DAYS = 7;
+const PORTAL_MAX_HORIZON_DAYS = 180;
+const PORTAL_LAUNCH_TIMEOUT_MS = 10_000;
+const PORTAL_CDP_TIMEOUT_MS = 10_000;
+const PORTAL_PAGE_SETTLE_MS = 1_500;
+const PORTAL_PAGINATION_SETTLE_MS = 1_000;
+const PORTAL_MAX_SUBVIEWS = 4;
+const PORTAL_MAX_NEXT_CLICKS_PER_VIEW = 3;
+const PORTAL_MAX_TOTAL_NEXT_CLICKS = 6;
+const PORTAL_CRAWL_BUDGET_MS = 30_000;
+const PORTAL_MAX_BUNDLE_CHARS = 28_000;
+const PORTAL_MAX_ITEMS = 200;
 
 const PORT = (() => {
   const raw = Number(process.env.OPENSTUDY_BRIDGE_PORT || DEFAULT_PORT);
@@ -3194,12 +3209,14 @@ async function executeAutoSyncPass(inputConfig, options = {}) {
   return {
     ok: true,
     config: savedConfig,
+    portalProfileReady: isPortalProfileReady(),
     summary: {
       obsidianNotesCount,
       oneNotePagesCount,
       upcoming30Days,
       recentOneNotePages,
       sampleObsidianNotes,
+      portalProfileReady: isPortalProfileReady(),
     },
   };
 }
@@ -3251,6 +3268,2073 @@ async function initAutoSyncScheduler() {
     }
   } catch {
     // ignore startup sync config load failure
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Hermes Native Portal Browser Reader (Zero-Dep Node WebSocket + Local CDP) */
+/* -------------------------------------------------------------------------- */
+
+let activePortalSession = null;
+
+function getPortalProfileDir() {
+  return path.join(getHermesDir(), 'portal-browser-profile');
+}
+
+function isPortalProfileReady() {
+  try {
+    const dir = getPortalProfileDir();
+    if (!fs.existsSync(dir)) return false;
+    const stat = fs.statSync(dir);
+    if (!stat.isDirectory()) return false;
+    const entries = fs.readdirSync(dir);
+    return entries.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clampPortalHorizonDays(rawValue) {
+  const num = Number(rawValue);
+  if (!Number.isFinite(num)) return PORTAL_DEFAULT_HORIZON_DAYS;
+  return Math.min(PORTAL_MAX_HORIZON_DAYS, Math.max(PORTAL_MIN_HORIZON_DAYS, Math.round(num)));
+}
+
+function isPrivateOrReservedIp(rawHost) {
+  const host = String(rawHost || '').replace(/^\[|\]$/g, '').toLowerCase();
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 0) return false;
+
+  if (ipVersion === 4) {
+    const parts = host.split('.').map((p) => Number(p));
+    if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+      return true;
+    }
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a >= 224) return true;
+    return false;
+  }
+
+  // IPv6 loopback, unspecified, link-local, unique-local, IPv4-mapped private
+  if (host === '::' || host === '::1') return true;
+  if (host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true;
+  if (host.startsWith('::ffff:')) {
+    const mapped = host.slice('::ffff:'.length);
+    if (net.isIP(mapped) === 4) {
+      return isPrivateOrReservedIp(mapped);
+    }
+    return true;
+  }
+  return false;
+}
+
+function validatePortalHttpsUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') {
+    return { ok: false, error: 'Bitte gib eine gültige Portal-Adresse ein.' };
+  }
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return { ok: false, error: 'Bitte gib zuerst die Adresse deines Schul- oder Uni-Portals ein.' };
+  }
+  if (trimmed.length > 400) {
+    return { ok: false, error: 'Die Portal-Adresse ist zu lang (maximal 400 Zeichen).' };
+  }
+  if (/[\s\r\n\0<>]/.test(trimmed)) {
+    return { ok: false, error: 'Die Portal-Adresse enthält ungültige Zeichen.' };
+  }
+  if (trimmed.startsWith('//')) {
+    return { ok: false, error: 'Bitte gib eine vollständige https://-Adresse oder Domain ein.' };
+  }
+
+  const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (schemeMatch) {
+    const scheme = schemeMatch[1].toLowerCase();
+    if (scheme !== 'https') {
+      return {
+        ok: false,
+        error: 'Aus Sicherheitsgründen sind für Portale ausschliesslich https://-Adressen erlaubt.',
+      };
+    }
+  }
+
+  const normalizedInput = schemeMatch ? trimmed : `https://${trimmed}`;
+  let parsed;
+  try {
+    parsed = new URL(normalizedInput);
+  } catch {
+    return { ok: false, error: 'Die eingegebene Portal-Adresse konnte nicht gelesen werden.' };
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return {
+      ok: false,
+      error: 'Aus Sicherheitsgründen sind für Portale ausschliesslich https://-Adressen erlaubt.',
+    };
+  }
+  if (parsed.username || parsed.password) {
+    return { ok: false, error: 'Zugangsdaten in der URL sind nicht erlaubt.' };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const bareHost = host.replace(/^\[|\]$/g, '');
+  if (!bareHost) {
+    return { ok: false, error: 'In der Portal-Adresse fehlt ein gültiger Hostname.' };
+  }
+  if (
+    bareHost === 'localhost' ||
+    bareHost.endsWith('.localhost') ||
+    bareHost.endsWith('.local') ||
+    bareHost.endsWith('.internal') ||
+    bareHost.endsWith('.home.arpa') ||
+    isPrivateOrReservedIp(bareHost)
+  ) {
+    return {
+      ok: false,
+      error: 'Lokale Adressen und private Netzwerke sind für den Portal-Leser gesperrt.',
+    };
+  }
+  if (net.isIP(bareHost) !== 0) {
+    return {
+      ok: false,
+      error: 'Bitte verwende die normale https://-Domain deines Portals statt einer direkten IP-Adresse.',
+    };
+  }
+  if (!bareHost.includes('.') || /^[.-]|[.-]$|\.\./.test(bareHost)) {
+    return { ok: false, error: 'Bitte gib eine gültige Domain mit Endung ein (z. B. portal.schule.ch).' };
+  }
+
+  return {
+    ok: true,
+    url: parsed.toString(),
+    origin: parsed.origin,
+  };
+}
+
+function detectLocalChromiumBrowser() {
+  const candidates = [];
+
+  if (process.platform === 'win32') {
+    const roots = [
+      process.env.PROGRAMFILES,
+      process.env['PROGRAMFILES(X86)'],
+      process.env.LOCALAPPDATA,
+    ].filter(Boolean);
+
+    const winSpecs = [
+      { browserName: 'Google Chrome', rel: path.join('Google', 'Chrome', 'Application', 'chrome.exe'), bin: 'chrome' },
+      { browserName: 'Microsoft Edge', rel: path.join('Microsoft', 'Edge', 'Application', 'msedge.exe'), bin: 'msedge' },
+      { browserName: 'Brave', rel: path.join('BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'), bin: 'brave' },
+      { browserName: 'Chromium', rel: path.join('Chromium', 'Application', 'chrome.exe'), bin: 'chromium' },
+    ];
+
+    for (const spec of winSpecs) {
+      for (const root of roots) {
+        candidates.push({ browserName: spec.browserName, executablePath: path.join(root, spec.rel) });
+      }
+      const onPath = findExecutableOnPath(spec.bin);
+      if (onPath) {
+        candidates.push({ browserName: spec.browserName, executablePath: onPath });
+      }
+    }
+  } else if (process.platform === 'darwin') {
+    const homeApps = path.join(os.homedir(), 'Applications');
+    const macSpecs = [
+      { browserName: 'Google Chrome', rel: 'Google Chrome.app/Contents/MacOS/Google Chrome' },
+      { browserName: 'Microsoft Edge', rel: 'Microsoft Edge.app/Contents/MacOS/Microsoft Edge' },
+      { browserName: 'Brave', rel: 'Brave Browser.app/Contents/MacOS/Brave Browser' },
+      { browserName: 'Chromium', rel: 'Chromium.app/Contents/MacOS/Chromium' },
+    ];
+    for (const spec of macSpecs) {
+      candidates.push({ browserName: spec.browserName, executablePath: path.join('/Applications', spec.rel) });
+      candidates.push({ browserName: spec.browserName, executablePath: path.join(homeApps, spec.rel) });
+    }
+  } else {
+    const linuxSpecs = [
+      { browserName: 'Google Chrome', bins: ['google-chrome', 'google-chrome-stable'] },
+      { browserName: 'Microsoft Edge', bins: ['microsoft-edge', 'microsoft-edge-stable'] },
+      { browserName: 'Brave', bins: ['brave-browser', 'brave'] },
+      { browserName: 'Chromium', bins: ['chromium', 'chromium-browser'] },
+    ];
+    for (const spec of linuxSpecs) {
+      for (const bin of spec.bins) {
+        const onPath = findExecutableOnPath(bin);
+        if (onPath) {
+          candidates.push({ browserName: spec.browserName, executablePath: onPath });
+        }
+        candidates.push({ browserName: spec.browserName, executablePath: `/usr/bin/${bin}` });
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (candidate.executablePath && isRegularExecutable(candidate.executablePath)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function findFreeLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const probeServer = net.createServer();
+    probeServer.unref();
+    probeServer.on('error', (err) => reject(err));
+    probeServer.listen(0, HOST, () => {
+      const address = probeServer.address();
+      const port = address && typeof address === 'object' ? address.port : 0;
+      probeServer.close(() => {
+        if (!port) {
+          reject(new Error('Konnte keinen freien lokalen Debug-Port reservieren.'));
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+async function fetchLoopbackJson(port, endpointPath, timeoutMs = 2_500) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://${HOST}:${port}${endpointPath}`, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const raw = await readLimitedText(res, 256 * 1024);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function listCdpTargets(port, timeoutMs = 2_500) {
+  const data = await fetchLoopbackJson(port, '/json/list', timeoutMs);
+  return Array.isArray(data) ? data : null;
+}
+
+function selectPrimaryPageTarget(targets, preferredOrigin = '') {
+  if (!Array.isArray(targets)) return null;
+  const pageTargets = targets.filter(
+    (t) =>
+      t &&
+      t.type === 'page' &&
+      typeof t.webSocketDebuggerUrl === 'string' &&
+      t.webSocketDebuggerUrl.startsWith('ws://127.0.0.1:') &&
+      typeof t.url === 'string' &&
+      !t.url.startsWith('devtools://') &&
+      !t.url.startsWith('chrome-extension://')
+  );
+  if (pageTargets.length === 0) return null;
+
+  if (preferredOrigin) {
+    const exactOrigin = pageTargets.find((t) => {
+      try {
+        return new URL(t.url).origin === preferredOrigin;
+      } catch {
+        return false;
+      }
+    });
+    if (exactOrigin) return exactOrigin;
+  }
+
+  const httpsTarget = pageTargets.find((t) => t.url.startsWith('https://'));
+  if (httpsTarget) return httpsTarget;
+
+  const nonBlank = pageTargets.find((t) => t.url && t.url !== 'about:blank' && !t.url.startsWith('chrome://'));
+  return nonBlank || pageTargets[0];
+}
+
+class NativeCdpClient {
+  constructor(wsUrl, expectedPort) {
+    const expectedPrefix = `ws://${HOST}:${expectedPort}/`;
+    if (typeof wsUrl !== 'string' || !wsUrl.startsWith(expectedPrefix)) {
+      throw new Error('Ungültige lokale CDP-WebSocket-Adresse.');
+    }
+    if (typeof globalThis.WebSocket !== 'function') {
+      throw new Error('Node.js WebSocket-Unterstützung fehlt (benötigt Node v22+).');
+    }
+    this.wsUrl = wsUrl;
+    this.ws = null;
+    this.nextId = 1;
+    this.pending = new Map();
+    this.closed = false;
+  }
+
+  connect(timeoutMs = 6_000) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const ws = new globalThis.WebSocket(this.wsUrl);
+      this.ws = ws;
+
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+        reject(new Error('Verbindung zum lokalen Portal-Browser hat das Zeitlimit überschritten.'));
+      }, timeoutMs);
+
+      ws.addEventListener('open', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      });
+
+      ws.addEventListener('error', () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error('Lokale CDP-Verbindung zum Browser fehlgeschlagen.'));
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        this.closed = true;
+        for (const entry of this.pending.values()) {
+          clearTimeout(entry.timer);
+          entry.reject(new Error('Portal-Browser-Verbindung wurde beendet.'));
+        }
+        this.pending.clear();
+      });
+
+      ws.addEventListener('message', (event) => {
+        let msg;
+        try {
+          const text = typeof event.data === 'string' ? event.data : String(event.data || '');
+          msg = JSON.parse(text);
+        } catch {
+          return;
+        }
+        if (typeof msg.id !== 'number') return;
+        const entry = this.pending.get(msg.id);
+        if (!entry) return;
+        this.pending.delete(msg.id);
+        clearTimeout(entry.timer);
+        if (msg.error) {
+          entry.reject(new Error(msg.error.message || 'CDP-Befehl fehlgeschlagen.'));
+        } else {
+          entry.resolve(msg.result || {});
+        }
+      });
+    });
+  }
+
+  send(method, params = {}, timeoutMs = PORTAL_CDP_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+      if (this.closed || !this.ws || this.ws.readyState !== globalThis.WebSocket.OPEN) {
+        reject(new Error('CDP-Verbindung ist nicht geöffnet.'));
+        return;
+      }
+      const id = this.nextId;
+      this.nextId += 1;
+
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP-Befehl "${method}" hat das Zeitlimit überschritten.`));
+      }, timeoutMs);
+
+      this.pending.set(id, { resolve, reject, timer });
+      try {
+        this.ws.send(JSON.stringify({ id, method, params }));
+      } catch (err) {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        reject(err);
+      }
+    });
+  }
+
+  async evaluate(expression, options = {}) {
+    const timeoutMs = options.timeoutMs || PORTAL_CDP_TIMEOUT_MS;
+    const result = await this.send(
+      'Runtime.evaluate',
+      {
+        expression,
+        awaitPromise: options.awaitPromise !== false,
+        returnByValue: true,
+        userGesture: Boolean(options.userGesture),
+      },
+      timeoutMs
+    );
+    if (result?.exceptionDetails) {
+      const desc =
+        result.exceptionDetails.exception?.description ||
+        result.exceptionDetails.text ||
+        'DOM-Auswertung fehlgeschlagen.';
+      throw new Error(desc);
+    }
+    return result?.result?.value;
+  }
+
+  close() {
+    this.closed = true;
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+    }
+    this.pending.clear();
+    if (this.ws) {
+      try {
+        if (
+          this.ws.readyState === globalThis.WebSocket.OPEN ||
+          this.ws.readyState === globalThis.WebSocket.CONNECTING
+        ) {
+          this.ws.close();
+        }
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+    }
+  }
+}
+
+const PORTAL_LOGIN_URL_PATTERN =
+  /(\/|^|[._-])(login|signin|sign-in|log-in|anmeld|auth|oauth|saml|shibboleth|adfs|sso|idp|cas\/login|keycloak|okta|microsoftonline|accounts\.google)(\/|$|[._?-])/i;
+
+const PORTAL_LOGIN_TITLE_PATTERN =
+  /\b(login|log in|sign in|anmelden|anmeldung|passwort|password|authentifizierung|single sign-on|sso)\b/i;
+
+function heuristicLooksLikeLogin(url, title) {
+  const safeUrl = typeof url === 'string' ? url : '';
+  const safeTitle = typeof title === 'string' ? title : '';
+  if (PORTAL_LOGIN_URL_PATTERN.test(safeUrl)) return true;
+  if (PORTAL_LOGIN_TITLE_PATTERN.test(safeTitle)) return true;
+  return false;
+}
+
+const PORTAL_LOGIN_CHECK_EXPRESSION = `(() => {
+  try {
+    const isVisible = (el) => {
+      if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+      const style = window.getComputedStyle(el);
+      if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 4 && rect.height > 4;
+    };
+    let hasPasswordInput = false;
+    const pwInputs = document.querySelectorAll('input[type="password"]');
+    for (const input of pwInputs) {
+      if (isVisible(input)) {
+        hasPasswordInput = true;
+        break;
+      }
+    }
+    if (!hasPasswordInput) {
+      const frames = document.querySelectorAll('iframe');
+      for (const frame of frames) {
+        try {
+          const doc = frame.contentDocument;
+          if (!doc) continue;
+          const framePw = doc.querySelectorAll('input[type="password"]');
+          for (const input of framePw) {
+            const rect = input.getBoundingClientRect();
+            if (rect.width > 4 && rect.height > 4) {
+              hasPasswordInput = true;
+              break;
+            }
+          }
+          if (hasPasswordInput) break;
+        } catch {
+          // ignore cross-origin iframe
+        }
+      }
+    }
+    return {
+      url: String(location.href || ''),
+      title: String(document.title || ''),
+      hasPasswordInput,
+      readyState: String(document.readyState || ''),
+    };
+  } catch {
+    return {
+      url: String(location.href || ''),
+      title: String(document.title || ''),
+      hasPasswordInput: false,
+      readyState: '',
+    };
+  }
+})()`;
+
+async function inspectTargetLoginState(port, target) {
+  const fallbackUrl = typeof target?.url === 'string' ? target.url : '';
+  const fallbackTitle = typeof target?.title === 'string' ? target.title : '';
+  let currentUrl = fallbackUrl;
+  let pageTitle = fallbackTitle;
+  let hasPasswordInput = false;
+
+  if (target?.webSocketDebuggerUrl) {
+    const client = new NativeCdpClient(target.webSocketDebuggerUrl, port);
+    try {
+      await client.connect(2_000);
+      const info = await client.evaluate(PORTAL_LOGIN_CHECK_EXPRESSION, { timeoutMs: 2_000 });
+      if (info && typeof info === 'object') {
+        if (typeof info.url === 'string' && info.url) currentUrl = info.url;
+        if (typeof info.title === 'string' && info.title) pageTitle = info.title;
+        hasPasswordInput = Boolean(info.hasPasswordInput);
+      }
+    } catch {
+      // Fall back to target metadata during active page navigation / SSO redirects
+    } finally {
+      client.close();
+    }
+  }
+
+  const looksLikeLogin = hasPasswordInput || heuristicLooksLikeLogin(currentUrl, pageTitle);
+  return {
+    currentUrl,
+    pageTitle,
+    looksLikeLogin,
+  };
+}
+
+async function closeActivePortalSession(options = {}) {
+  const session = activePortalSession;
+  if (!session) {
+    return { ok: true, closed: false };
+  }
+  const targetSessionId = typeof options.sessionId === 'string' ? options.sessionId.trim() : '';
+  if (targetSessionId && !options.force && targetSessionId !== session.sessionId) {
+    return { ok: true, closed: false };
+  }
+
+  activePortalSession = null;
+
+  // Attempt graceful CDP Browser.close first so cookies & session storage flush cleanly to disk.
+  if (!session.exited) {
+    try {
+      const versionInfo = await fetchLoopbackJson(session.port, '/json/version', options.quick ? 700 : 1_500);
+      const browserWsUrl = versionInfo?.webSocketDebuggerUrl;
+      if (typeof browserWsUrl === 'string' && browserWsUrl.startsWith(`ws://${HOST}:${session.port}/`)) {
+        const browserClient = new NativeCdpClient(browserWsUrl, session.port);
+        try {
+          await browserClient.connect(options.quick ? 700 : 1_500);
+          await browserClient.send('Browser.close', {}, options.quick ? 700 : 1_500).catch(() => {});
+        } finally {
+          browserClient.close();
+        }
+      }
+    } catch {
+      // ignore and fall back to process signal below
+    }
+  }
+
+  const waitUntilExited = (ms) =>
+    new Promise((resolve) => {
+      if (session.exited || session.child.exitCode !== null) {
+        resolve(true);
+        return;
+      }
+      const onExit = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        session.child.off('exit', onExit);
+        resolve(false);
+      }, ms);
+      session.child.once('exit', onExit);
+    });
+
+  const exitedGracefully = await waitUntilExited(options.quick ? 500 : 2_000);
+  if (!exitedGracefully && !session.exited) {
+    try {
+      session.child.kill('SIGTERM');
+    } catch {
+      // ignore
+    }
+    const exitedAfterTerm = await waitUntilExited(options.quick ? 400 : 1_200);
+    if (!exitedAfterTerm && !session.exited) {
+      try {
+        session.child.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return { ok: true, closed: true };
+}
+
+async function startPortalSession(rawPortalUrl) {
+  const checkedUrl = validatePortalHttpsUrl(rawPortalUrl);
+  if (!checkedUrl.ok) {
+    throw Object.assign(new Error(checkedUrl.error), { status: 400 });
+  }
+
+  if (typeof globalThis.WebSocket !== 'function') {
+    throw Object.assign(
+      new Error('Die lokale Bridge benötigt Node.js v22 oder neuer für den integrierten Portal-Leser.'),
+      { status: 500 }
+    );
+  }
+
+  const browser = detectLocalChromiumBrowser();
+  if (!browser) {
+    throw Object.assign(
+      new Error(
+        'Kein lokaler Chromium-Browser (Chrome, Edge oder Brave) gefunden. Installiere Chrome oder Edge, um dein Portal direkt einzulesen.'
+      ),
+      { status: 404 }
+    );
+  }
+
+  // Strictly max 1 active portal session at a time: close any previous session cleanly first.
+  if (activePortalSession) {
+    await closeActivePortalSession({ force: true });
+    await sleep(350);
+  }
+
+  const profileDir = getPortalProfileDir();
+  await fsp.mkdir(profileDir, { recursive: true });
+  const port = await findFreeLoopbackPort();
+
+  const spawnArgs = [
+    `--remote-debugging-port=${port}`,
+    '--remote-debugging-address=127.0.0.1',
+    `--user-data-dir=${profileDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-default-apps',
+    '--new-window',
+    checkedUrl.url,
+  ];
+
+  let child;
+  try {
+    child = spawn(browser.executablePath, spawnArgs, {
+      shell: false,
+      windowsHide: false,
+      detached: false,
+      stdio: 'ignore',
+    });
+  } catch (err) {
+    throw Object.assign(
+      new Error(`Portal-Browser (${browser.browserName}) konnte nicht gestartet werden: ${err.message}`),
+      { status: 500 }
+    );
+  }
+
+  const sessionId = crypto.randomUUID();
+  const session = {
+    sessionId,
+    port,
+    browserName: browser.browserName,
+    portalUrl: checkedUrl.url,
+    origin: checkedUrl.origin,
+    child,
+    startedAt: Date.now(),
+    exited: false,
+    extracting: false,
+  };
+
+  child.on('exit', () => {
+    session.exited = true;
+    if (activePortalSession && activePortalSession.sessionId === sessionId) {
+      activePortalSession = null;
+    }
+  });
+
+  child.on('error', () => {
+    session.exited = true;
+  });
+
+  activePortalSession = session;
+
+  // Wait for CDP endpoint to come online on 127.0.0.1:<port>
+  const deadline = Date.now() + PORTAL_LAUNCH_TIMEOUT_MS;
+  let primaryTarget = null;
+
+  while (Date.now() < deadline) {
+    if (session.exited) {
+      break;
+    }
+    const targets = await listCdpTargets(port, 1_000);
+    if (targets && targets.length > 0) {
+      primaryTarget = selectPrimaryPageTarget(targets, checkedUrl.origin);
+      if (primaryTarget) {
+        break;
+      }
+    }
+    await sleep(220);
+  }
+
+  if (!primaryTarget) {
+    await closeActivePortalSession({ sessionId, force: true });
+    throw Object.assign(
+      new Error(
+        `Der Portal-Browser (${browser.browserName}) hat nicht rechtzeitig reagiert. Schliesse eventuell offene alte Portal-Fenster und versuche es erneut.`
+      ),
+      { status: 504 }
+    );
+  }
+
+  // Give initial page a brief moment to start resolving title/login state
+  await sleep(650);
+  const refreshedTargets = (await listCdpTargets(port, 1_500)) || [];
+  const latestTarget = selectPrimaryPageTarget(refreshedTargets, checkedUrl.origin) || primaryTarget;
+  const inspected = await inspectTargetLoginState(port, latestTarget);
+
+  return {
+    ok: true,
+    sessionId,
+    browserName: browser.browserName,
+    portalUrl: checkedUrl.url,
+    currentUrl: inspected.currentUrl || checkedUrl.url,
+    pageTitle: inspected.pageTitle || '',
+    looksLikeLogin: inspected.looksLikeLogin,
+  };
+}
+
+async function getPortalSessionStatus(rawSessionId) {
+  const session = activePortalSession;
+  const requestedId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
+
+  if (!session || session.exited || (requestedId && requestedId !== session.sessionId)) {
+    return {
+      ok: true,
+      active: false,
+      currentUrl: '',
+      pageTitle: '',
+      looksLikeLogin: false,
+    };
+  }
+
+  const targets = await listCdpTargets(session.port, 2_000);
+  if (!targets || targets.length === 0) {
+    if (session.exited || session.child.exitCode !== null) {
+      activePortalSession = null;
+    }
+    return {
+      ok: true,
+      active: false,
+      currentUrl: '',
+      pageTitle: '',
+      looksLikeLogin: false,
+    };
+  }
+
+  const target = selectPrimaryPageTarget(targets, session.origin);
+  if (!target) {
+    return {
+      ok: true,
+      active: false,
+      currentUrl: '',
+      pageTitle: '',
+      looksLikeLogin: false,
+    };
+  }
+
+  const inspected = await inspectTargetLoginState(session.port, target);
+  return {
+    ok: true,
+    active: true,
+    currentUrl: inspected.currentUrl,
+    pageTitle: inspected.pageTitle,
+    looksLikeLogin: inspected.looksLikeLogin,
+  };
+}
+
+const PORTAL_SNAPSHOT_EXPRESSION = `(() => {
+  try {
+    const MAX_BODY_CHARS = 40000;
+    const MAX_ROWS = 320;
+    const MAX_LINKS = 140;
+
+    const isVisible = (el) => {
+      if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+      const style = window.getComputedStyle(el);
+      if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 2 && rect.height > 2;
+    };
+
+    const normalizeInline = (text) =>
+      String(text || '').replace(/\\s+/g, ' ').trim();
+
+    const collectFromDocument = (doc, outBodyParts, outRows, outLinks, outButtons) => {
+      if (!doc || !doc.body) return;
+
+      const pwInputs = doc.querySelectorAll('input[type="password"]');
+      let hasPw = false;
+      for (const input of pwInputs) {
+        try {
+          const rect = input.getBoundingClientRect();
+          if (rect.width > 4 && rect.height > 4) {
+            hasPw = true;
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const rawInner = String(doc.body.innerText || '').trim();
+      if (rawInner) {
+        outBodyParts.push(rawInner);
+      }
+
+      // Structured table rows
+      const rowSet = new Set();
+      const pushRow = (text) => {
+        const clean = normalizeInline(text);
+        if (!clean || clean.length < 4 || clean.length > 420) return;
+        if (rowSet.has(clean) || outRows.length >= MAX_ROWS) return;
+        rowSet.add(clean);
+        outRows.push(clean);
+      };
+
+      const rows = doc.querySelectorAll('table tr, [role="row"]');
+      for (const row of rows) {
+        if (outRows.length >= MAX_ROWS) break;
+        const cells = row.querySelectorAll('th, td, [role="cell"], [role="gridcell"], [role="columnheader"]');
+        if (cells.length > 0) {
+          const parts = [];
+          for (const cell of cells) {
+            const cellDate = cell.getAttribute('data-date') || cell.getAttribute('datetime') || '';
+            const cellAria = cell.getAttribute('aria-label') || '';
+            const cellText = normalizeInline(cell.innerText || cell.textContent || '');
+            const combined = cellDate && cellText && !cellText.includes(cellDate)
+              ? '[' + cellDate + '] ' + cellText
+              : cellText || cellAria;
+            if (combined) parts.push(combined);
+          }
+          if (parts.length > 0) {
+            pushRow(parts.join(' | '));
+          }
+        } else {
+          pushRow(row.innerText || '');
+        }
+      }
+
+      // Calendar cells & event tiles (FullCalendar, Moodle, Canvas, WebUntis, custom widgets)
+      const calNodes = doc.querySelectorAll(
+        '[data-date], [data-day], .fc-event, .fc-daygrid-day, .calendar-event, .event-item, [class*="event"], [class*="termin"], [class*="exam"], [class*="pruefung"], [role="gridcell"][aria-label]'
+      );
+      for (const node of calNodes) {
+        if (outRows.length >= MAX_ROWS) break;
+        const dataDate = node.getAttribute('data-date') || node.getAttribute('data-day') || '';
+        const aria = normalizeInline(node.getAttribute('aria-label') || '');
+        const titleAttr = normalizeInline(node.getAttribute('title') || '');
+        const text = normalizeInline(node.innerText || '');
+        if (!text && !aria && !titleAttr) continue;
+        if (text.length > 360) continue;
+        const chunks = [];
+        if (dataDate) chunks.push('[' + dataDate + ']');
+        if (text) chunks.push(text);
+        if (aria && (!text || !text.toLowerCase().includes(aria.toLowerCase().slice(0, 24)))) {
+          chunks.push(aria);
+        }
+        if (titleAttr && (!text || !text.toLowerCase().includes(titleAttr.toLowerCase().slice(0, 24)))) {
+          chunks.push(titleAttr);
+        }
+        if (chunks.length > 0) {
+          pushRow(chunks.join(' | '));
+        }
+      }
+
+      // Same-origin links & menu buttons
+      const anchors = doc.querySelectorAll('a[href]');
+      for (const a of anchors) {
+        if (outLinks.length >= MAX_LINKS) break;
+        const href = String(a.getAttribute('href') || '').trim();
+        if (!href) continue;
+        const text = normalizeInline(a.innerText || a.textContent || '').slice(0, 120);
+        const ariaLabel = normalizeInline(a.getAttribute('aria-label') || '').slice(0, 120);
+        const title = normalizeInline(a.getAttribute('title') || '').slice(0, 120);
+        let resolvedHref = '';
+        try {
+          resolvedHref = new URL(href, doc.baseURI || location.href).toString();
+        } catch {
+          continue;
+        }
+        outLinks.push({
+          href: resolvedHref,
+          rawHref: href,
+          text,
+          ariaLabel,
+          title,
+        });
+      }
+
+      const menuButtons = doc.querySelectorAll(
+        'nav button, header button, aside button, [role="tab"], [role="menuitem"], .nav button, .menu button, .sidebar button'
+      );
+      for (const btn of menuButtons) {
+        if (outButtons.length >= 40) break;
+        if (!isVisible(btn)) continue;
+        const text = normalizeInline(btn.innerText || btn.textContent || '').slice(0, 100);
+        const ariaLabel = normalizeInline(btn.getAttribute('aria-label') || '').slice(0, 100);
+        const title = normalizeInline(btn.getAttribute('title') || '').slice(0, 100);
+        if (!text && !ariaLabel && !title) continue;
+        outButtons.push({ text, ariaLabel, title });
+      }
+
+      return hasPw;
+    };
+
+    const bodyParts = [];
+    const structuredRows = [];
+    const links = [];
+    const menuButtons = [];
+    let hasPasswordInput = Boolean(
+      collectFromDocument(document, bodyParts, structuredRows, links, menuButtons)
+    );
+
+    // Also inspect same-origin iframes safely (many school portals embed agenda/schedule frames)
+    const frames = document.querySelectorAll('iframe');
+    let frameCount = 0;
+    for (const frame of frames) {
+      if (frameCount >= 4) break;
+      try {
+        const frameDoc = frame.contentDocument;
+        if (!frameDoc || !frameDoc.body) continue;
+        frameCount += 1;
+        const frameHasPw = collectFromDocument(frameDoc, bodyParts, structuredRows, links, menuButtons);
+        if (frameHasPw) hasPasswordInput = true;
+      } catch {
+        // Cross-origin iframe — skip cleanly
+      }
+    }
+
+    const bodyText = bodyParts.join('\\n\\n').slice(0, MAX_BODY_CHARS);
+    return {
+      url: String(location.href || ''),
+      origin: String(location.origin || ''),
+      title: String(document.title || ''),
+      hasPasswordInput,
+      bodyText,
+      structuredRows,
+      links,
+      menuButtons,
+    };
+  } catch (err) {
+    return {
+      url: String(location.href || ''),
+      origin: String(location.origin || ''),
+      title: String(document.title || ''),
+      hasPasswordInput: false,
+      bodyText: '',
+      structuredRows: [],
+      links: [],
+      menuButtons: [],
+      error: String(err && err.message ? err.message : err),
+    };
+  }
+})()`;
+
+const PORTAL_AGENDA_NEGATIVE_PATTERN =
+  /(logout|log-out|log_out|signout|sign-out|abmelden|ausloggen|delete|remove|löschen|loeschen|destroy|reset|password|passwort|kennwort|print|drucken|export|download|hilfe|help|impressum|datenschutz|privacy|support|profil|profile|settings|einstellungen|account|konto|warenkorb|cart|bezahlen|pay)/i;
+
+const PORTAL_AGENDA_FILE_EXT_PATTERN = /\.(pdf|zip|rar|7z|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|svg|mp4|mp3|ics|csv)(\?|$)/i;
+
+const PORTAL_AGENDA_HIGH_KEYWORDS = [
+  'prüfung',
+  'pruefung',
+  'prüfungen',
+  'pruefungen',
+  'klausur',
+  'klausuren',
+  'leistungsnachweis',
+  'leistungsnachweise',
+  'exam',
+  'exams',
+  'agenda',
+  'kalender',
+  'calendar',
+];
+
+const PORTAL_AGENDA_MEDIUM_KEYWORDS = [
+  'stundenplan',
+  'schedule',
+  'timetable',
+  'wochenplan',
+  'termin',
+  'termine',
+  'aufgabe',
+  'aufgaben',
+  'hausaufgabe',
+  'homework',
+  'deadline',
+  'deadlines',
+  'abgabe',
+  'abgaben',
+  'test',
+  'tests',
+  'events',
+  'veranstaltung',
+  'monat',
+  'monatsansicht',
+  'woche',
+];
+
+function scoreAgendaCandidateText(combinedText, hrefPath = '') {
+  const hay = `${combinedText} ${hrefPath}`.toLowerCase();
+  if (!hay.trim()) return -100;
+  if (PORTAL_AGENDA_NEGATIVE_PATTERN.test(hay)) return -100;
+  if (PORTAL_AGENDA_FILE_EXT_PATTERN.test(hrefPath)) return -100;
+
+  let score = 0;
+  for (const kw of PORTAL_AGENDA_HIGH_KEYWORDS) {
+    if (hay.includes(kw)) score += 12;
+  }
+  for (const kw of PORTAL_AGENDA_MEDIUM_KEYWORDS) {
+    if (hay.includes(kw)) score += 6;
+  }
+  return score;
+}
+
+function selectSameOriginAgendaLinks(links, baseOrigin, currentUrl, visitedUrls) {
+  const byUrl = new Map();
+  const normalizedCurrent = normalizeComparableUrl(currentUrl);
+
+  for (const item of Array.isArray(links) ? links : []) {
+    if (!item || typeof item.href !== 'string') continue;
+    const rawHref = typeof item.rawHref === 'string' ? item.rawHref.trim().toLowerCase() : '';
+    if (
+      !rawHref ||
+      rawHref === '#' ||
+      rawHref.startsWith('javascript:') ||
+      rawHref.startsWith('mailto:') ||
+      rawHref.startsWith('tel:')
+    ) {
+      continue;
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(item.href);
+    } catch {
+      continue;
+    }
+    if (parsed.protocol !== 'https:' || parsed.origin !== baseOrigin) {
+      continue;
+    }
+
+    const comparable = normalizeComparableUrl(parsed.toString());
+    if (comparable === normalizedCurrent || visitedUrls.has(comparable)) {
+      continue;
+    }
+
+    const label = [item.text, item.ariaLabel, item.title].filter(Boolean).join(' ').trim();
+    const pathAndQuery = `${parsed.pathname} ${parsed.search} ${parsed.hash}`;
+    const score = scoreAgendaCandidateText(label, pathAndQuery);
+    if (score <= 0) continue;
+
+    const existing = byUrl.get(comparable);
+    if (!existing || score > existing.score) {
+      byUrl.set(comparable, {
+        url: parsed.toString(),
+        comparable,
+        label: label || parsed.pathname,
+        score,
+      });
+    }
+  }
+
+  return Array.from(byUrl.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, PORTAL_MAX_SUBVIEWS);
+}
+
+function selectAgendaMenuButtons(buttons) {
+  const seen = new Set();
+  const scored = [];
+  for (const btn of Array.isArray(buttons) ? buttons : []) {
+    if (!btn || typeof btn !== 'object') continue;
+    const label = [btn.text, btn.ariaLabel, btn.title].filter(Boolean).join(' ').trim();
+    if (!label) continue;
+    const key = label.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const score = scoreAgendaCandidateText(label, '');
+    if (score >= 6) {
+      scored.push({
+        text: btn.text || '',
+        ariaLabel: btn.ariaLabel || '',
+        title: btn.title || '',
+        score,
+      });
+    }
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, 2);
+}
+
+function normalizeComparableUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    // Keep hash if it looks like an SPA hash route (e.g. #/calendar or #!/agenda)
+    const keepHash = parsed.hash && /^#[/!]/.test(parsed.hash) ? parsed.hash : '';
+    const cleanPath = parsed.pathname.replace(/\/+$/, '') || '/';
+    return `${parsed.origin}${cleanPath}${parsed.search}${keepHash}`;
+  } catch {
+    return String(rawUrl || '').trim();
+  }
+}
+
+function fingerprintSnapshot(snapshot) {
+  const sample = `${snapshot?.url || ''}|${(snapshot?.structuredRows || []).join('\n').slice(0, 2500)}|${(snapshot?.bodyText || '').slice(0, 4000)}`;
+  return crypto.createHash('sha1').update(sample).digest('hex');
+}
+
+async function waitForPageReady(client, timeoutMs = 6_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = await client.evaluate('document.readyState', { timeoutMs: 1_500 });
+      if (state === 'complete' || state === 'interactive') {
+        if (state === 'complete') return true;
+      }
+    } catch {
+      // Context may be resetting during navigation
+    }
+    await sleep(220);
+  }
+  return false;
+}
+
+const PORTAL_CLICK_NEXT_PERIOD_EXPRESSION = `(() => {
+  try {
+    const NEG = /(zurück|zurueck|prev|previous|vorherig|logout|signout|abmelden|löschen|loeschen|delete|remove|abbrechen|cancel|schliessen|schließen|close|speichern|save|senden|submit|hilfe|help)/i;
+    const EXPLICIT_NEXT = /(nächste[rns]?\\s*(monat|woche|zeitraum|periode|ansicht)?|naechste[rns]?\\s*(monat|woche|zeitraum|periode|ansicht)?|next\\s*(month|week|period)?|vorwärts|vorwaerts|monat\\s*vor|woche\\s*vor|weiter\\s*(monat|woche)?)/i;
+    const CALENDAR_HINT = /(next|weiter|vor|month|monat|week|woche|calendar|kalender|agenda|fc-next|cal-next|chevron-right|arrow-right)/i;
+    const MONTH_HEADER = /(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember|january|february|march|may|june|july|october|december|kw\\s*\\d{1,2})\\s*20\\d{2}|20\\d{2}/i;
+
+    const isVisible = (el) => {
+      if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+      if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+      const style = window.getComputedStyle(el);
+      if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width >= 12 && rect.height >= 12 && rect.width <= 320 && rect.height <= 90;
+    };
+
+    const pageHasCalendarMonth = MONTH_HEADER.test((document.body && document.body.innerText || '').slice(0, 6000));
+
+    const findBestInDoc = (doc) => {
+      const els = doc.querySelectorAll('button, a, [role="button"], input[type="button"]');
+      let best = null;
+      let bestScore = 0;
+
+      for (const el of els) {
+        if (!isVisible(el)) continue;
+        if (el.tagName === 'A') {
+          const rawHref = String(el.getAttribute('href') || '').trim();
+          if (rawHref && !rawHref.startsWith('#') && !rawHref.startsWith('javascript:')) {
+            try {
+              const targetUrl = new URL(rawHref, doc.baseURI || location.href);
+              if (targetUrl.origin !== location.origin) continue;
+            } catch {
+              continue;
+            }
+          }
+        }
+        const typeAttr = String(el.getAttribute('type') || '').toLowerCase();
+        if (typeAttr === 'submit') continue;
+
+        const text = String(el.innerText || el.textContent || el.value || '').replace(/\\s+/g, ' ').trim();
+        const aria = String(el.getAttribute('aria-label') || '').trim();
+        const title = String(el.getAttribute('title') || '').trim();
+        const cls = String(el.className || '');
+        const dataAction = String(el.getAttribute('data-action') || el.getAttribute('data-testid') || '');
+        const combined = (text + ' ' + aria + ' ' + title + ' ' + cls + ' ' + dataAction).trim();
+
+        if (!combined || text.length > 48) continue;
+        if (NEG.test(text + ' ' + aria + ' ' + title)) continue;
+
+        let score = 0;
+        if (EXPLICIT_NEXT.test(aria) || EXPLICIT_NEXT.test(title) || EXPLICIT_NEXT.test(text)) {
+          score += 20;
+        }
+        if (/fc-next-button|next-month|cal-next|calendar-next|btn-next/i.test(cls + ' ' + dataAction)) {
+          score += 18;
+        }
+        const isArrowGlyph = /^[>›»→\\u203a\\u00bb\\u2192]$|^->$/.test(text);
+        if (isArrowGlyph) {
+          if (CALENDAR_HINT.test(aria + ' ' + title + ' ' + cls + ' ' + dataAction)) {
+            score += 14;
+          } else if (pageHasCalendarMonth) {
+            const parentText = String(el.parentElement && el.parentElement.innerText || '').slice(0, 120);
+            if (MONTH_HEADER.test(parentText)) {
+              score += 12;
+            }
+          }
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          best = { el, label: aria || title || text || cls.slice(0, 40), score };
+        }
+      }
+      return best;
+    };
+
+    let picked = findBestInDoc(document);
+    if (!picked) {
+      const frames = document.querySelectorAll('iframe');
+      for (const frame of frames) {
+        try {
+          const fdoc = frame.contentDocument;
+          if (!fdoc) continue;
+          const candidate = findBestInDoc(fdoc);
+          if (candidate && (!picked || candidate.score > picked.score)) {
+            picked = candidate;
+          }
+        } catch {
+          // ignore cross-origin iframe
+        }
+      }
+    }
+
+    if (!picked || picked.score < 12) {
+      return { clicked: false };
+    }
+    picked.el.click();
+    return { clicked: true, label: picked.label };
+  } catch (err) {
+    return { clicked: false, error: String(err && err.message ? err.message : err) };
+  }
+})()`;
+
+function buildClickMenuButtonExpression(targetButton) {
+  const serialized = JSON.stringify({
+    text: String(targetButton.text || ''),
+    ariaLabel: String(targetButton.ariaLabel || ''),
+    title: String(targetButton.title || ''),
+  });
+  return `(() => {
+    try {
+      const target = ${serialized};
+      const norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim();
+      const btns = document.querySelectorAll(
+        'nav button, header button, aside button, [role="tab"], [role="menuitem"], .nav button, .menu button, .sidebar button'
+      );
+      for (const btn of btns) {
+        const text = norm(btn.innerText || btn.textContent || '');
+        const aria = norm(btn.getAttribute('aria-label') || '');
+        const title = norm(btn.getAttribute('title') || '');
+        if (
+          (target.text && text === target.text) ||
+          (target.ariaLabel && aria === target.ariaLabel) ||
+          (target.title && title === target.title)
+        ) {
+          btn.click();
+          return { clicked: true };
+        }
+      }
+      return { clicked: false };
+    } catch {
+      return { clicked: false };
+    }
+  })()`;
+}
+
+function viewLooksCalendarLike(snapshot) {
+  const hay = `${snapshot?.url || ''} ${snapshot?.title || ''} ${(snapshot?.bodyText || '').slice(0, 1200)}`.toLowerCase();
+  return /(agenda|kalender|calendar|stundenplan|schedule|timetable|wochenplan|monat|prüfung|pruefung|termin|events|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember|january|february|march|october|december)/i.test(
+    hay
+  );
+}
+
+/* ---- Deterministic 90-Day Universal Agenda Parser ---- */
+
+const MONTH_NAME_MAP = {
+  januar: 1,
+  jan: 1,
+  january: 1,
+  jän: 1,
+  jaen: 1,
+  februar: 2,
+  feb: 2,
+  february: 2,
+  märz: 3,
+  maerz: 3,
+  mär: 3,
+  mar: 3,
+  march: 3,
+  april: 4,
+  apr: 4,
+  mai: 5,
+  may: 5,
+  juni: 6,
+  jun: 6,
+  june: 6,
+  juli: 7,
+  jul: 7,
+  july: 7,
+  august: 8,
+  aug: 8,
+  september: 9,
+  sep: 9,
+  sept: 9,
+  oktober: 10,
+  okt: 10,
+  october: 10,
+  oct: 10,
+  november: 11,
+  nov: 11,
+  dezember: 12,
+  dez: 12,
+  december: 12,
+  dec: 12,
+};
+
+const PORTAL_EXAM_PATTERN =
+  /\b(prüfung|pruefung|prüfungen|pruefungen|klausur|test|tests|exam|exams|lernkontrolle|leistungsnachweis|vortrag|präsentation|praesentation|referat|matura|semesterprüfung|aufsatz|diktat|vokabeltest|wörtlitest|woertlitest|mündlich|muendlich|schriftlich|quiz)\b/i;
+
+const PORTAL_HOMEWORK_PATTERN =
+  /\b(hausaufgabe|hausaufgaben|aufgabe|aufgaben|abgabe|abgaben|homework|assignment|assignments|deadline|deadlines|einreichen|submission|due|dossier|projektarbeit|übung|uebung|übungsblatt|arbeitsblatt)\b/i;
+
+const PORTAL_LESSON_PATTERN =
+  /\b(lektion|unterricht|vorlesung|seminar|stunde|stundenplan|tutorium|praktikum|klasse|doppellektion|kurs|module?)\b/i;
+
+const PORTAL_METADATA_DATE_PATTERN =
+  /(stand\s*:|aktualisiert|letzte[rn]?\s*(anmeldung|login|besuch|änderung)|last\s*login|druckdatum|gedruckt\s*am|copyright|©|erstellt\s*am|version\s+\d)/i;
+
+const PORTAL_NOISE_LINE_PATTERN =
+  /^(impressum|datenschutz|hilfe|help|abmelden|logout|anmelden|login|einstellungen|settings|menü|menu|suche|search|drucken|print|zurück|weiter|heute|today|monat|woche|tag|liste|mo|di|mi|do|fr|sa|so|mon|tue|wed|thu|fri|sat|sun|\d{1,2})$/i;
+
+const KNOWN_SUBJECT_RULES = [
+  { pattern: /\b(mathematik|mathe|analysis|algebra|geometrie|statistik)\b/i, name: 'Mathematik' },
+  { pattern: /\b(deutsch|germanistik|literatur)\b/i, name: 'Deutsch' },
+  { pattern: /\b(englisch|english)\b/i, name: 'Englisch' },
+  { pattern: /\b(französisch|franzoesisch|français|francais|french)\b/i, name: 'Französisch' },
+  { pattern: /\b(italienisch|italiano|italian)\b/i, name: 'Italienisch' },
+  { pattern: /\b(spanisch|español|espanol|spanish)\b/i, name: 'Spanisch' },
+  { pattern: /\b(latein|latin)\b/i, name: 'Latein' },
+  { pattern: /\b(biologie|biology)\b/i, name: 'Biologie' },
+  { pattern: /\b(chemie|chemistry)\b/i, name: 'Chemie' },
+  { pattern: /\b(physik|physics)\b/i, name: 'Physik' },
+  { pattern: /\b(geschichte|history)\b/i, name: 'Geschichte' },
+  { pattern: /\b(geografie|geographie|geography)\b/i, name: 'Geografie' },
+  { pattern: /\b(wirtschaft\s*(?:&|und)?\s*recht|wirtschaft|ökonomie|oekonomie|bwl|vwl|recht|economics|law)\b/i, name: 'Wirtschaft & Recht' },
+  { pattern: /\b(informatik|programmieren|computer\s*science|software|datenbanken|algorithmen)\b/i, name: 'Informatik' },
+  { pattern: /\b(philosophie|philosophy)\b/i, name: 'Philosophie' },
+  { pattern: /\b(psychologie|psychology|pädagogik|paedagogik)\b/i, name: 'Psychologie' },
+  { pattern: /\b(musik|music)\b/i, name: 'Musik' },
+  { pattern: /\b(bildnerisches\s*gestalten|kunst|zeichnen|art)\b/i, name: 'Bildnerisches Gestalten' },
+  { pattern: /\b(sport|turnen)\b/i, name: 'Sport' },
+  { pattern: /\b(ethik|religion|religionslehre)\b/i, name: 'Ethik & Religion' },
+  { pattern: /\b(medizin|anatomie|biochemie)\b/i, name: 'Medizin' },
+  { pattern: /\b(architektur|bauwesen)\b/i, name: 'Architektur' },
+];
+
+const SHORT_SUBJECT_CODES = {
+  MA: 'Mathematik',
+  MAT: 'Mathematik',
+  DE: 'Deutsch',
+  DEU: 'Deutsch',
+  EN: 'Englisch',
+  ENG: 'Englisch',
+  FR: 'Französisch',
+  FRA: 'Französisch',
+  IT: 'Italienisch',
+  ES: 'Spanisch',
+  BI: 'Biologie',
+  BIO: 'Biologie',
+  CH: 'Chemie',
+  CHE: 'Chemie',
+  PH: 'Physik',
+  PHY: 'Physik',
+  GS: 'Geschichte',
+  GG: 'Geografie',
+  GEO: 'Geografie',
+  WR: 'Wirtschaft & Recht',
+  WIR: 'Wirtschaft & Recht',
+  IN: 'Informatik',
+  INF: 'Informatik',
+  BG: 'Bildnerisches Gestalten',
+  MU: 'Musik',
+  MUS: 'Musik',
+  SP: 'Sport',
+  PS: 'Psychologie',
+  PL: 'Philosophie',
+};
+
+function getPortalHorizonBounds(horizonDays) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(start);
+  end.setDate(start.getDate() + horizonDays);
+  return {
+    startDate: start,
+    startIso: formatLocalIsoDate(start),
+    endIso: formatLocalIsoDate(end),
+    currentYear: start.getFullYear(),
+  };
+}
+
+function detectMonthYearContext(text) {
+  const monthNames = Object.keys(MONTH_NAME_MAP).join('|');
+  const namedRegex = new RegExp(`\\b(${monthNames})\\.?\\s+(20\\d{2})\\b`, 'i');
+  const namedMatch = text.match(namedRegex);
+  if (namedMatch) {
+    const month = MONTH_NAME_MAP[namedMatch[1].toLowerCase()];
+    const year = Number(namedMatch[2]);
+    if (month && year >= 2000 && year <= 2100) {
+      return { year, month };
+    }
+  }
+  const slashMatch = text.match(/\b(0?[1-9]|1[0-2])\/(20\d{2})\b/);
+  if (slashMatch) {
+    return { year: Number(slashMatch[2]), month: Number(slashMatch[1]) };
+  }
+  return null;
+}
+
+function resolveDayMonthWithoutYear(day, month, contextMonthYear, bounds) {
+  const candidateYears = [];
+  if (contextMonthYear) {
+    if (contextMonthYear.month === 12 && month === 1) {
+      candidateYears.push(contextMonthYear.year + 1, contextMonthYear.year);
+    } else if (contextMonthYear.month === 1 && month === 12) {
+      candidateYears.push(contextMonthYear.year - 1, contextMonthYear.year);
+    } else {
+      candidateYears.push(contextMonthYear.year, contextMonthYear.year + 1);
+    }
+  } else {
+    candidateYears.push(bounds.currentYear, bounds.currentYear + 1, bounds.currentYear - 1);
+  }
+
+  for (const yr of candidateYears) {
+    const iso = toValidIsoDate(yr, month, day);
+    if (iso && iso >= bounds.startIso && iso <= bounds.endIso) {
+      return iso;
+    }
+  }
+  return null;
+}
+
+function extractPortalDatesFromLine(line, contextMonthYear, bounds) {
+  const results = new Set();
+  let hasAnyDate = false;
+  const text = String(line || '');
+
+  // 1. ISO YYYY-MM-DD
+  const isoRegex = /\b(20\d{2})-(0?[1-9]|1[0-2])-(0?[1-9]|[12]\d|3[01])\b/g;
+  let match;
+  while ((match = isoRegex.exec(text)) !== null) {
+    const iso = toValidIsoDate(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (iso) {
+      hasAnyDate = true;
+      if (iso >= bounds.startIso && iso <= bounds.endIso) results.add(iso);
+    }
+  }
+
+  // 2. European DD.MM.YYYY
+  const euFullRegex = /\b(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.(20\d{2})\b/g;
+  while ((match = euFullRegex.exec(text)) !== null) {
+    const iso = toValidIsoDate(Number(match[3]), Number(match[2]), Number(match[1]));
+    if (iso) {
+      hasAnyDate = true;
+      if (iso >= bounds.startIso && iso <= bounds.endIso) results.add(iso);
+    }
+  }
+
+  // 3. European short year DD.MM.YY (not followed by digits)
+  const euShortYearRegex = /\b(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.(\d{2})(?!\d)/g;
+  while ((match = euShortYearRegex.exec(text)) !== null) {
+    const iso = toValidIsoDate(2000 + Number(match[3]), Number(match[2]), Number(match[1]));
+    if (iso) {
+      hasAnyDate = true;
+      if (iso >= bounds.startIso && iso <= bounds.endIso) results.add(iso);
+    }
+  }
+
+  // 4. Written German / English day-month: "14. Dezember 2026" or "14. Dez."
+  const monthNames = Object.keys(MONTH_NAME_MAP).join('|');
+  const writtenEuRegex = new RegExp(
+    `\\b(0?[1-9]|[12]\\d|3[01])\\.?\\s+(${monthNames})\\.?(?:\\s+(20\\d{2}))?\\b`,
+    'gi'
+  );
+  while ((match = writtenEuRegex.exec(text)) !== null) {
+    const day = Number(match[1]);
+    const month = MONTH_NAME_MAP[match[2].toLowerCase()];
+    if (!month) continue;
+    hasAnyDate = true;
+    const iso = match[3]
+      ? toValidIsoDate(Number(match[3]), month, day)
+      : resolveDayMonthWithoutYear(day, month, contextMonthYear, bounds);
+    if (iso && iso >= bounds.startIso && iso <= bounds.endIso) results.add(iso);
+  }
+
+  // 5. Written US English: "Dec 14, 2026" or "December 14"
+  const writtenUsRegex = new RegExp(
+    `\\b(${monthNames})\\.?\\s+(0?[1-9]|[12]\\d|3[01])(?:st|nd|rd|th)?(?:,?\\s*(20\\d{2}))?\\b`,
+    'gi'
+  );
+  while ((match = writtenUsRegex.exec(text)) !== null) {
+    const month = MONTH_NAME_MAP[match[1].toLowerCase()];
+    const day = Number(match[2]);
+    if (!month) continue;
+    hasAnyDate = true;
+    const iso = match[3]
+      ? toValidIsoDate(Number(match[3]), month, day)
+      : resolveDayMonthWithoutYear(day, month, contextMonthYear, bounds);
+    if (iso && iso >= bounds.startIso && iso <= bounds.endIso) results.add(iso);
+  }
+
+  // 6. European DD.MM. without year (only when not part of DD.MM.YYYY / DD.MM.YY)
+  if (!hasAnyDate) {
+    const dayMonthRegex = /\b(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.(?!\d)/g;
+    while ((match = dayMonthRegex.exec(text)) !== null) {
+      hasAnyDate = true;
+      const iso = resolveDayMonthWithoutYear(Number(match[1]), Number(match[2]), contextMonthYear, bounds);
+      if (iso) results.add(iso);
+    }
+  }
+
+  return {
+    inHorizon: Array.from(results),
+    hasAnyDate,
+  };
+}
+
+function padTwo(value) {
+  return String(value).padStart(2, '0');
+}
+
+function extractTimeRange(line) {
+  const text = String(line || '');
+  const rangeMatch = text.match(
+    /\b([01]?\d|2[0-3]):([0-5]\d)\s*(?:-|–|—|bis|to)\s*([01]?\d|2[0-3]):([0-5]\d)\b/i
+  );
+  if (rangeMatch) {
+    return {
+      startTime: `${padTwo(rangeMatch[1])}:${rangeMatch[2]}`,
+      endTime: `${padTwo(rangeMatch[3])}:${rangeMatch[4]}`,
+    };
+  }
+  const singleMatch = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (singleMatch) {
+    return {
+      startTime: `${padTwo(singleMatch[1])}:${singleMatch[2]}`,
+      endTime: undefined,
+    };
+  }
+  return { startTime: undefined, endTime: undefined };
+}
+
+function extractRoomHint(line) {
+  const text = String(line || '');
+  const labeled = text.match(
+    /\b(?:Raum|Zimmer|Zi\.?|Room|Saal|Hörsaal|Hoersaal|Labor|Halle|Gebäude|Gebaeude)\s*[:.]?\s*([A-Za-z0-9][A-Za-z0-9.\-/]{0,14})\b/i
+  );
+  if (labeled) {
+    return `${labeled[0].replace(/\s+/g, ' ').trim()}`.slice(0, 40);
+  }
+  const venue = text.match(/\b(Turnhalle(?:\s*[A-Za-z0-9]+)?|Sporthalle(?:\s*[A-Za-z0-9]+)?|Aula|Mediothek|Bibliothek)\b/i);
+  if (venue) {
+    return venue[1].trim().slice(0, 40);
+  }
+  return undefined;
+}
+
+function detectCourseFromText(line) {
+  const text = String(line || '');
+  for (const rule of KNOWN_SUBJECT_RULES) {
+    if (rule.pattern.test(text)) {
+      return { courseTitle: rule.name, matchedKnown: true };
+    }
+  }
+  // Check standalone uppercase 2–3 letter subject codes separated by delimiters
+  const codeMatches = text.match(/(?:^|[\s|,;:(])([A-Z]{2,3})(?=$|[\s|,;:)\-–—])/g);
+  if (codeMatches) {
+    for (const token of codeMatches) {
+      const code = token.replace(/[^A-Z]/g, '');
+      if (SHORT_SUBJECT_CODES[code]) {
+        return { courseTitle: SHORT_SUBJECT_CODES[code], matchedKnown: true };
+      }
+    }
+  }
+  return { courseTitle: 'Allgemein', matchedKnown: false };
+}
+
+function classifyPortalCategory(line, hasTimeRange, matchedKnownCourse) {
+  if (PORTAL_EXAM_PATTERN.test(line)) return 'exam';
+  if (PORTAL_HOMEWORK_PATTERN.test(line)) return 'homework';
+  if (PORTAL_LESSON_PATTERN.test(line)) return 'lesson';
+  if (hasTimeRange && matchedKnownCourse) return 'lesson';
+  return 'event';
+}
+
+function cleanPortalItemTitle(rawLine) {
+  const stripped = String(rawLine || '')
+    .replace(/\[20\d{2}-\d{2}-\d{2}\]/g, ' ')
+    .replace(/\b20\d{2}-\d{2}-\d{2}\b/g, ' ')
+    .replace(/\b(0?[1-9]|[12]\d|3[01])\.(0?[1-9]|1[0-2])\.(?:20\d{2}|\d{2})?(?!\d)/g, ' ')
+    .replace(/\b([01]?\d|2[0-3]):[0-5]\d\s*(?:-|–|—|bis|to)\s*([01]?\d|2[0-3]):[0-5]\d\s*(?:Uhr)?\b/gi, ' ')
+    .replace(/\b([01]?\d|2[0-3]):[0-5]\d\s*(?:Uhr)?\b/gi, ' ')
+    .replace(/\b(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag|Mo|Di|Mi|Do|Fr|Sa|So),?\s*/gi, ' ')
+    .replace(/\s*\|\s*/g, ' — ')
+    .replace(/^[\s\-–—|:;,./]+|[\s\-–—|:;,./]+$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return stripped.slice(0, 120);
+}
+
+function isPureDateHeadingLine(line) {
+  const remainder = cleanPortalItemTitle(line)
+    .replace(
+      /\b(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember|january|february|march|may|june|july|october|december|jan|feb|mär|mar|apr|jun|jul|aug|sep|sept|okt|oct|nov|dez|dec)\b/gi,
+      ''
+    )
+    .replace(/\b20\d{2}\b/g, '')
+    .replace(/[\s,.\-–—|:;/()]+/g, '')
+    .trim();
+  return remainder.length <= 2;
+}
+
+function scrubSensitiveTokensFromText(rawText) {
+  return String(rawText || '')
+    // Strip JWTs
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
+    // Strip Bearer headers / query tokens / csrf tokens
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [redacted]')
+    .replace(/\b(access_token|id_token|refresh_token|csrf_token|csrf|session_?id|phpsessid|jsessionid|auth_?token)=[^\s&;]+/gi, '$1=[redacted]')
+    // Strip long unbroken hex/token hashes >= 40 chars
+    .replace(/\b[A-Fa-f0-9]{40,}\b/g, '[redacted]');
+}
+
+function extractPortalAgendaFromViews(capturedViews, horizonDays) {
+  const bounds = getPortalHorizonBounds(horizonDays);
+  const rawItems = [];
+  const bundleSections = [];
+  let bundleLength = 0;
+
+  for (let viewIdx = 0; viewIdx < capturedViews.length; viewIdx += 1) {
+    const view = capturedViews[viewIdx];
+    const viewTitle = String(view.title || 'Portal-Ansicht').trim().slice(0, 120);
+    const viewUrl = String(view.url || '').trim();
+    const combinedRaw = [
+      ...(Array.isArray(view.structuredRows) ? view.structuredRows : []),
+      ...String(view.bodyText || '').replace(/\r\n/g, '\n').split('\n'),
+    ];
+
+    const dedupedLines = [];
+    const seenViewLines = new Set();
+    for (const rawLine of combinedRaw) {
+      const cleanedLine = scrubSensitiveTokensFromText(rawLine).replace(/\s+/g, ' ').trim();
+      if (!cleanedLine || cleanedLine.length < 2) continue;
+      const lineKey = cleanedLine.toLowerCase();
+      if (seenViewLines.has(lineKey)) continue;
+      seenViewLines.add(lineKey);
+      dedupedLines.push(cleanedLine);
+    }
+
+    // Build cleanedTextBundle section (capped at PORTAL_MAX_BUNDLE_CHARS total)
+    if (bundleLength < PORTAL_MAX_BUNDLE_CHARS) {
+      let safeHeaderUrl = viewUrl;
+      try {
+        const parsed = new URL(viewUrl);
+        safeHeaderUrl = `${parsed.origin}${parsed.pathname}${parsed.hash && /^#[/!]/.test(parsed.hash) ? parsed.hash : ''}`;
+      } catch {
+        safeHeaderUrl = '';
+      }
+      const header = `=== [Ansicht ${viewIdx + 1}] ${viewTitle}${safeHeaderUrl ? ` (${safeHeaderUrl})` : ''} ===`;
+      const bodyJoined = dedupedLines.join('\n');
+      const section = `${header}\n${bodyJoined}`;
+      const remaining = PORTAL_MAX_BUNDLE_CHARS - bundleLength;
+      if (section.length <= remaining) {
+        bundleSections.push(section);
+        bundleLength += section.length + 2;
+      } else if (remaining > 120) {
+        bundleSections.push(section.slice(0, remaining).trimEnd());
+        bundleLength = PORTAL_MAX_BUNDLE_CHARS;
+      }
+    }
+
+    // Track active month/year header and active date section header across lines
+    let contextMonthYear = detectMonthYearContext(`${viewTitle} ${dedupedLines.slice(0, 25).join(' ')}`);
+    let activeSectionDate = null;
+    let linesSinceDateHeader = 0;
+
+    for (let i = 0; i < dedupedLines.length; i += 1) {
+      const line = dedupedLines[i];
+      if (PORTAL_METADATA_DATE_PATTERN.test(line)) continue;
+      if (PORTAL_NOISE_LINE_PATTERN.test(line)) continue;
+
+      const updatedMonthYear = detectMonthYearContext(line);
+      if (updatedMonthYear && line.length <= 60) {
+        contextMonthYear = updatedMonthYear;
+      }
+
+      const dateScan = extractPortalDatesFromLine(line, contextMonthYear, bounds);
+      const inlineDates = dateScan.inHorizon;
+
+      if (inlineDates.length === 0 && dateScan.hasAnyDate) {
+        // Explicit date outside horizon (past or beyond horizonDays): never inherit previous section date
+        activeSectionDate = null;
+        linesSinceDateHeader = 0;
+        continue;
+      }
+
+      if (inlineDates.length > 0) {
+        if (isPureDateHeadingLine(line)) {
+          activeSectionDate = inlineDates[0];
+          linesSinceDateHeader = 0;
+          continue;
+        }
+
+        const timeInfo = extractTimeRange(line);
+        const room = extractRoomHint(line);
+        const courseInfo = detectCourseFromText(line);
+        const title = cleanPortalItemTitle(line);
+        if (!title || title.length < 3 || PORTAL_NOISE_LINE_PATTERN.test(title)) {
+          activeSectionDate = inlineDates[0];
+          linesSinceDateHeader = 0;
+          continue;
+        }
+
+        const category = classifyPortalCategory(
+          line,
+          Boolean(timeInfo.startTime && timeInfo.endTime),
+          courseInfo.matchedKnown
+        );
+
+        for (const isoDate of inlineDates) {
+          const hash = crypto
+            .createHash('sha1')
+            .update(`${isoDate}|${timeInfo.startTime || ''}|${title.toLowerCase()}`)
+            .digest('hex')
+            .slice(0, 8);
+          rawItems.push({
+            id: `portal-${isoDate}-${hash}`,
+            title,
+            date: isoDate,
+            courseTitle: courseInfo.courseTitle,
+            source: 'portal-sync',
+            ...(timeInfo.startTime ? { startTime: timeInfo.startTime } : {}),
+            ...(timeInfo.endTime ? { endTime: timeInfo.endTime } : {}),
+            category,
+            ...(room ? { room } : {}),
+          });
+        }
+        activeSectionDate = null;
+        linesSinceDateHeader = 0;
+        continue;
+      }
+
+      // Associate lines immediately following a standalone date header (e.g., agenda day lists)
+      if (activeSectionDate && linesSinceDateHeader < 8) {
+        linesSinceDateHeader += 1;
+        const timeInfo = extractTimeRange(line);
+        const room = extractRoomHint(line);
+        const courseInfo = detectCourseFromText(line);
+        const hasSignal =
+          Boolean(timeInfo.startTime) ||
+          Boolean(room) ||
+          courseInfo.matchedKnown ||
+          PORTAL_EXAM_PATTERN.test(line) ||
+          PORTAL_HOMEWORK_PATTERN.test(line) ||
+          PORTAL_LESSON_PATTERN.test(line);
+
+        if (!hasSignal) continue;
+        const title = cleanPortalItemTitle(line);
+        if (!title || title.length < 4 || PORTAL_NOISE_LINE_PATTERN.test(title)) continue;
+
+        const category = classifyPortalCategory(
+          line,
+          Boolean(timeInfo.startTime && timeInfo.endTime),
+          courseInfo.matchedKnown
+        );
+        const hash = crypto
+          .createHash('sha1')
+          .update(`${activeSectionDate}|${timeInfo.startTime || ''}|${title.toLowerCase()}`)
+          .digest('hex')
+          .slice(0, 8);
+
+        rawItems.push({
+          id: `portal-${activeSectionDate}-${hash}`,
+          title,
+          date: activeSectionDate,
+          courseTitle: courseInfo.courseTitle,
+          source: 'portal-sync',
+          ...(timeInfo.startTime ? { startTime: timeInfo.startTime } : {}),
+          ...(timeInfo.endTime ? { endTime: timeInfo.endTime } : {}),
+          category,
+          ...(room ? { room } : {}),
+        });
+      }
+    }
+  }
+
+  // Deduplicate and sort chronologically
+  const deduped = [];
+  const seenKeys = new Set();
+  for (const item of rawItems) {
+    const normTitle = item.title
+      .toLowerCase()
+      .replace(/[^a-z0-9äöü]+/g, ' ')
+      .trim()
+      .slice(0, 64);
+    const key = `${item.date}|${item.startTime || ''}|${normTitle}`;
+    if (!normTitle || seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    deduped.push(item);
+  }
+
+  deduped.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    const ta = a.startTime || '99:99';
+    const tb = b.startTime || '99:99';
+    if (ta !== tb) return ta.localeCompare(tb);
+    return a.title.localeCompare(b.title);
+  });
+
+  return {
+    items: deduped.slice(0, PORTAL_MAX_ITEMS),
+    cleanedTextBundle: bundleSections.join('\n\n').slice(0, PORTAL_MAX_BUNDLE_CHARS),
+  };
+}
+
+async function extractPortalSessionAgenda(body = {}) {
+  const requestedId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+  const horizonDays = clampPortalHorizonDays(body.horizonDays);
+  const closeAfter = body.closeAfter !== false;
+
+  const session = activePortalSession;
+  if (!session || session.exited || (requestedId && requestedId !== session.sessionId)) {
+    throw Object.assign(
+      new Error('Kein aktives Portal-Fenster gefunden. Öffne zuerst dein Portal über die Bridge.'),
+      { status: 404 }
+    );
+  }
+  if (session.extracting) {
+    throw Object.assign(
+      new Error('Die Portal-Agenda wird bereits eingelesen. Bitte warte einen Moment.'),
+      { status: 409 }
+    );
+  }
+
+  session.extracting = true;
+  let client = null;
+
+  try {
+    const targets = await listCdpTargets(session.port, 2_500);
+    if (!targets || targets.length === 0) {
+      throw Object.assign(
+        new Error('Das Portal-Fenster wurde geschlossen. Öffne es erneut, um die Agenda einzulesen.'),
+        { status: 404 }
+      );
+    }
+
+    const target = selectPrimaryPageTarget(targets, session.origin);
+    if (!target || !target.webSocketDebuggerUrl) {
+      throw Object.assign(
+        new Error('Keine geöffnete Portal-Seite gefunden.'),
+        { status: 404 }
+      );
+    }
+
+    client = new NativeCdpClient(target.webSocketDebuggerUrl, session.port);
+    await client.connect(6_000);
+    await client.send('Page.enable', {}, 4_000).catch(() => {});
+
+    const crawlDeadline = Date.now() + PORTAL_CRAWL_BUDGET_MS;
+    const capturedViews = [];
+    const visitedPages = [];
+    const visitedUrlSet = new Set();
+    const seenFingerprints = new Set();
+    let totalNextClicks = 0;
+
+    const recordView = (snapshot) => {
+      if (!snapshot || typeof snapshot !== 'object') return false;
+      const fp = fingerprintSnapshot(snapshot);
+      if (seenFingerprints.has(fp)) return false;
+      seenFingerprints.add(fp);
+      capturedViews.push(snapshot);
+      const cleanTitle = String(snapshot.title || 'Portal-Ansicht').trim().slice(0, 140);
+      let safeUrl = String(snapshot.url || '');
+      try {
+        const parsed = new URL(safeUrl);
+        safeUrl = `${parsed.origin}${parsed.pathname}${parsed.hash && /^#[/!]/.test(parsed.hash) ? parsed.hash : ''}`;
+      } catch {
+        // keep original
+      }
+      if (!visitedPages.some((p) => p.url === safeUrl && p.title === cleanTitle)) {
+        visitedPages.push({ url: safeUrl, title: cleanTitle });
+      }
+      return true;
+    };
+
+    const paginateCalendarView = async (baseOrigin, lastFingerprint) => {
+      let currentFp = lastFingerprint;
+      let clicksOnView = 0;
+      while (
+        clicksOnView < PORTAL_MAX_NEXT_CLICKS_PER_VIEW &&
+        totalNextClicks < PORTAL_MAX_TOTAL_NEXT_CLICKS &&
+        Date.now() < crawlDeadline - 2_000
+      ) {
+        const clickResult = await client
+          .evaluate(PORTAL_CLICK_NEXT_PERIOD_EXPRESSION, { timeoutMs: 4_000, userGesture: true })
+          .catch(() => ({ clicked: false }));
+
+        if (!clickResult || !clickResult.clicked) {
+          break;
+        }
+        clicksOnView += 1;
+        totalNextClicks += 1;
+        await sleep(PORTAL_PAGINATION_SETTLE_MS);
+
+        const nextSnap = await client
+          .evaluate(PORTAL_SNAPSHOT_EXPRESSION, { timeoutMs: 6_000 })
+          .catch(() => null);
+        if (!nextSnap || nextSnap.hasPasswordInput) break;
+        if (nextSnap.origin && nextSnap.origin !== baseOrigin) break;
+
+        const nextFp = fingerprintSnapshot(nextSnap);
+        if (nextFp === currentFp) {
+          break;
+        }
+        currentFp = nextFp;
+        recordView(nextSnap);
+      }
+    };
+
+    // Step A: Current page snapshot
+    await waitForPageReady(client, 3_500);
+    const initialSnapshot = await client.evaluate(PORTAL_SNAPSHOT_EXPRESSION, { timeoutMs: 8_000 });
+    if (!initialSnapshot || !initialSnapshot.url) {
+      throw Object.assign(
+        new Error('Die aktuelle Portal-Seite konnte nicht ausgelesen werden.'),
+        { status: 502 }
+      );
+    }
+
+    let baseOrigin = session.origin;
+    try {
+      const currentParsed = new URL(initialSnapshot.url);
+      if (currentParsed.protocol === 'https:') {
+        baseOrigin = currentParsed.origin;
+      }
+    } catch {
+      // keep initial session origin
+    }
+
+    visitedUrlSet.add(normalizeComparableUrl(initialSnapshot.url));
+    recordView(initialSnapshot);
+
+    // Discover same-origin agenda/exam/schedule links BEFORE paginating the initial view
+    const discoveredLinks = selectSameOriginAgendaLinks(
+      initialSnapshot.links,
+      baseOrigin,
+      initialSnapshot.url,
+      visitedUrlSet
+    );
+    const discoveredMenuButtons =
+      discoveredLinks.length < 2 ? selectAgendaMenuButtons(initialSnapshot.menuButtons) : [];
+
+    // Step C on initial view if it already shows a calendar/agenda
+    if (!initialSnapshot.hasPasswordInput && viewLooksCalendarLike(initialSnapshot)) {
+      await paginateCalendarView(baseOrigin, fingerprintSnapshot(initialSnapshot));
+    }
+
+    // Step B: Visit up to 4 distinct highest-scoring same-origin agenda views
+    for (const candidate of discoveredLinks) {
+      if (Date.now() >= crawlDeadline) break;
+      if (visitedUrlSet.has(candidate.comparable)) continue;
+      visitedUrlSet.add(candidate.comparable);
+
+      try {
+        await client.send('Page.navigate', { url: candidate.url }, 8_000);
+        await waitForPageReady(client, 5_500);
+        await sleep(PORTAL_PAGE_SETTLE_MS);
+
+        const snap = await client.evaluate(PORTAL_SNAPSHOT_EXPRESSION, { timeoutMs: 7_000 });
+        if (!snap || !snap.url) continue;
+
+        let snapOrigin = '';
+        try {
+          snapOrigin = new URL(snap.url).origin;
+        } catch {
+          snapOrigin = '';
+        }
+
+        if (snapOrigin !== baseOrigin || snap.hasPasswordInput) {
+          // Bounced to external SSO or login wall — return to logged-in portal URL safely
+          await client.send('Page.navigate', { url: initialSnapshot.url }, 6_000).catch(() => {});
+          await waitForPageReady(client, 3_000);
+          continue;
+        }
+
+        visitedUrlSet.add(normalizeComparableUrl(snap.url));
+        const wasNew = recordView(snap);
+
+        // Step C: Click next month/period up to 3 times on calendar/agenda sub-views
+        if (wasNew && viewLooksCalendarLike(snap)) {
+          await paginateCalendarView(baseOrigin, fingerprintSnapshot(snap));
+        }
+      } catch {
+        // Keep crawling remaining candidate views even if one view times out
+      }
+    }
+
+    // Fallback for pure SPA portals that navigate via menu/tab buttons instead of <a href>
+    if (discoveredMenuButtons.length > 0 && Date.now() < crawlDeadline - 3_000) {
+      for (const menuBtn of discoveredMenuButtons) {
+        if (Date.now() >= crawlDeadline - 2_000) break;
+        try {
+          const clicked = await client.evaluate(buildClickMenuButtonExpression(menuBtn), {
+            timeoutMs: 3_000,
+            userGesture: true,
+          });
+          if (!clicked || !clicked.clicked) continue;
+          await sleep(PORTAL_PAGE_SETTLE_MS);
+          const snap = await client.evaluate(PORTAL_SNAPSHOT_EXPRESSION, { timeoutMs: 6_000 });
+          if (!snap || snap.hasPasswordInput || snap.origin !== baseOrigin) continue;
+          const wasNew = recordView(snap);
+          if (wasNew && viewLooksCalendarLike(snap)) {
+            await paginateCalendarView(baseOrigin, fingerprintSnapshot(snap));
+          }
+        } catch {
+          // ignore SPA button navigation failure
+        }
+      }
+    }
+
+    // Step D: Universal deterministic 90-day agenda extractor & cleaned text bundle
+    const extracted = extractPortalAgendaFromViews(capturedViews, horizonDays);
+
+    return {
+      ok: true,
+      items: extracted.items,
+      visitedPages,
+      cleanedTextBundle: extracted.cleanedTextBundle,
+      horizonDays,
+    };
+  } finally {
+    if (client) {
+      client.close();
+    }
+    session.extracting = false;
+    // Step E: Clean shutdown (flushes cookies to ~/.openstudy/hermes/portal-browser-profile/)
+    if (closeAfter) {
+      await closeActivePortalSession({ sessionId: session.sessionId });
+    }
   }
 }
 
@@ -3410,6 +5494,7 @@ async function handleRequest(req, res) {
         config,
         running: Boolean(activeSyncPromise),
         nextRunAt: config.enabled ? autoSyncNextRunAt : null,
+        portalProfileReady: isPortalProfileReady(),
         storage: '~/.openstudy/hermes/sync-config.json',
       });
     } catch (err) {
@@ -3519,6 +5604,68 @@ async function handleRequest(req, res) {
       sendJson(res, err.status || 500, {
         ok: false,
         error: err.message || 'Hermes auto-sync pass failed.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/portal/session/start') {
+    try {
+      const body = await readJsonBody(req);
+      const result = await startPortalSession(body.portalUrl);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Portal-Fenster konnte nicht geöffnet werden.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/portal/session/status') {
+    try {
+      const sessionId = parsedUrl.searchParams.get('sessionId') || '';
+      const result = await getPortalSessionStatus(sessionId);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        active: false,
+        currentUrl: '',
+        pageTitle: '',
+        looksLikeLogin: false,
+        error: err.message || 'Portal-Status konnte nicht abgefragt werden.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/portal/session/extract') {
+    try {
+      const body = await readJsonBody(req);
+      const result = await extractPortalSessionAgenda(body);
+      sendJson(res, 200, result);
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Portal-Agenda konnte nicht ausgelesen werden.',
+      });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/api/portal/session/close') {
+    try {
+      const body = await readJsonBody(req);
+      const result = await closeActivePortalSession({
+        sessionId: typeof body.sessionId === 'string' ? body.sessionId : '',
+      });
+      sendJson(res, 200, { ok: true, closed: Boolean(result.closed) });
+    } catch (err) {
+      sendJson(res, err.status || 500, {
+        ok: false,
+        error: err.message || 'Portal-Fenster konnte nicht geschlossen werden.',
       });
     }
     return;
@@ -3843,10 +5990,15 @@ server.listen(PORT, HOST, () => {
 function shutdown() {
   stopAutoSyncTimer();
   cancelActiveHighlight();
-  server.close(() => {
-    process.exit(0);
-  });
-  setTimeout(() => process.exit(0), 2000).unref();
+  setTimeout(() => process.exit(0), 2500).unref();
+  Promise.resolve()
+    .then(() => closeActivePortalSession({ force: true, quick: true }))
+    .catch(() => {})
+    .finally(() => {
+      server.close(() => {
+        process.exit(0);
+      });
+    });
 }
 
 process.on('SIGINT', shutdown);

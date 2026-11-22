@@ -16,6 +16,7 @@ import {
   MainView,
   NoteBlock,
   OpenStudyState,
+  ScheduleItemCategory,
   SchoolScheduleItem,
   ScreenSpotlight,
   StudyCard,
@@ -52,12 +53,20 @@ export interface HermesToolHandlers {
 
 const VALID_VIEWS: ReadonlySet<MainView> = new Set<MainView>([
   'home',
+  'calendar',
   'teacher',
   'notes',
   'trainer',
   'languages',
   'focus',
   'import',
+]);
+
+const VALID_SCHEDULE_CATEGORIES: ReadonlySet<ScheduleItemCategory> = new Set<ScheduleItemCategory>([
+  'exam',
+  'homework',
+  'lesson',
+  'event',
 ]);
 
 const VALID_MEMORY_CATEGORIES: ReadonlySet<HermesMemoryEntry['category']> = new Set([
@@ -243,7 +252,7 @@ export const HERMES_LIVE_FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
         view: {
           type: Type.STRING,
           description: 'Zielansicht in OpenStudy.',
-          enum: ['home', 'teacher', 'notes', 'trainer', 'languages', 'focus', 'import'],
+          enum: ['home', 'calendar', 'teacher', 'notes', 'trainer', 'languages', 'focus', 'import'],
         },
         courseTitle: {
           type: Type.STRING,
@@ -303,21 +312,38 @@ export const HERMES_LIVE_FUNCTION_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: 'add_school_schedule',
     description:
-      'Trägt erkannte Prüfungen, Tests, Abgaben oder Termine der nächsten 3 Monate (90 Tage, z. B. aus einem geöffneten Schulportal oder Stundenplan) direkt in den OpenStudy-Prüfungskalender ein.',
+      'Trägt erkannte Prüfungen, Tests, Hausaufgaben, Lektionen oder Termine der nächsten 3 Monate (90 Tage, z. B. aus einem geöffneten Schulportal oder Stundenplan) direkt in den OpenStudy-Kalender ein.',
     parameters: {
       type: Type.OBJECT,
       properties: {
         items: {
           type: Type.ARRAY,
-          description: 'Liste erkannter Termine/Prüfungen.',
+          description: 'Liste erkannter Termine, Prüfungen, Hausaufgaben oder Lektionen.',
           items: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING, description: 'Titel der Prüfung oder Aufgabe.' },
+              title: { type: Type.STRING, description: 'Titel der Prüfung, Aufgabe oder Lektion.' },
               date: { type: Type.STRING, description: 'Datum im Format YYYY-MM-DD.' },
               courseTitle: {
                 type: Type.STRING,
                 description: 'Fachname, z. B. Mathematik, BWL, Englisch.',
+              },
+              startTime: {
+                type: Type.STRING,
+                description: 'Optionale Startzeit im Format HH:MM, z. B. "08:15".',
+              },
+              endTime: {
+                type: Type.STRING,
+                description: 'Optionale Endzeit im Format HH:MM, z. B. "09:00".',
+              },
+              category: {
+                type: Type.STRING,
+                description: 'Optionale Kategorie des Termins.',
+                enum: ['exam', 'homework', 'lesson', 'event'],
+              },
+              room: {
+                type: Type.STRING,
+                description: 'Optionaler Raum oder Ort, z. B. "B204" oder "Lab 2".',
               },
             },
             required: ['title', 'date', 'courseTitle'],
@@ -352,6 +378,16 @@ function isValidIsoDate(raw: string): boolean {
   }
   const d = new Date(year, month - 1, day);
   return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
+}
+
+function normalizeTimeHhMm(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const match = /^(\d{1,2})[:.](\d{2})$/.exec(raw.trim());
+  if (!match) return undefined;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return undefined;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
 function nowIsoTimestamp(): string {
@@ -1136,7 +1172,7 @@ export async function executeHermesToolCall(
           return finish('error', `Ungültige Zielansicht: "${String(args.view ?? '')}"`, {
             ok: false,
             error:
-              'Erlaubte Ansichten sind: home, teacher, notes, trainer, languages, focus, import.',
+              'Erlaubte Ansichten sind: home, calendar, teacher, notes, trainer, languages, focus, import.',
           });
         }
 
@@ -1262,16 +1298,26 @@ export async function executeHermesToolCall(
         const items: SchoolScheduleItem[] = [];
         const seenKeys = new Set<string>();
 
-        for (const raw of rawItems.slice(0, 30)) {
+        for (const raw of rawItems.slice(0, 60)) {
           if (!raw || typeof raw !== 'object') continue;
           const record = raw as Record<string, unknown>;
           const title = toTrimmedString(record.title, 140);
           const date = toTrimmedString(record.date, 20);
           const courseTitle = toTrimmedString(record.courseTitle, 80) || 'Allgemein';
+          const startTime = normalizeTimeHhMm(record.startTime);
+          const endTime = normalizeTimeHhMm(record.endTime);
+          const rawCategory = toTrimmedString(record.category, 24).toLowerCase() as
+            | ScheduleItemCategory
+            | '';
+          const category =
+            rawCategory && VALID_SCHEDULE_CATEGORIES.has(rawCategory)
+              ? rawCategory
+              : undefined;
+          const room = toTrimmedString(record.room, 48) || undefined;
 
           if (!title || !isValidIsoDate(date)) continue;
 
-          const dedupeKey = `${date}|${title.toLowerCase()}`;
+          const dedupeKey = `${date}|${startTime ?? ''}|${title.toLowerCase()}`;
           if (seenKeys.has(dedupeKey)) continue;
           seenKeys.add(dedupeKey);
 
@@ -1281,11 +1327,15 @@ export async function executeHermesToolCall(
             date,
             courseTitle,
             source: 'smart-import',
+            ...(startTime ? { startTime } : {}),
+            ...(endTime ? { endTime } : {}),
+            ...(category ? { category } : {}),
+            ...(room ? { room } : {}),
           });
         }
 
         if (items.length === 0) {
-          return finish('error', 'Keine gültigen Prüfungstermine (YYYY-MM-DD) übergeben', {
+          return finish('error', 'Keine gültigen Termine (YYYY-MM-DD) übergeben', {
             ok: false,
             error:
               'Mindestens ein Termin mit Titel, Fachname und gültigem Datum im Format YYYY-MM-DD ist erforderlich.',
@@ -1296,8 +1346,8 @@ export async function executeHermesToolCall(
 
         const summary =
           items.length === 1
-            ? `Termin eingetragen: "${items[0].title}" (${items[0].date}, ${items[0].courseTitle})`
-            : `${items.length} Prüfungstermine im Kalender eingetragen`;
+            ? `Termin eingetragen: "${items[0].title}" (${items[0].date}${items[0].startTime ? ` ${items[0].startTime}` : ''}, ${items[0].courseTitle})`
+            : `${items.length} Termine im Kalender eingetragen`;
 
         return finish('ok', summary, {
           ok: true,

@@ -182,10 +182,16 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     [state.dailyPlan]
   );
 
-  const sortedSchedule = useMemo(
-    () => [...state.schoolSchedule].sort((a, b) => a.date.localeCompare(b.date)),
-    [state.schoolSchedule]
-  );
+  const sortedSchedule = useMemo(() => {
+    const todayIso = getLocalTodayIso();
+    const sorted = [...state.schoolSchedule].sort((a, b) => {
+      const dateCmp = a.date.localeCompare(b.date);
+      if (dateCmp !== 0) return dateCmp;
+      return (a.startTime ?? '').localeCompare(b.startTime ?? '');
+    });
+    const upcoming = sorted.filter((item) => item.date >= todayIso);
+    return upcoming.length > 0 ? upcoming : sorted;
+  }, [state.schoolSchedule]);
 
   const hasVoiceKey = Boolean(state.provider.geminiApiKey.trim());
 
@@ -797,11 +803,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               </h2>
               <button
                 type="button"
-                onClick={() => onNavigate('import')}
-                className="text-[12.5px] font-medium cursor-pointer transition-colors hover:text-[var(--accent)]"
+                onClick={() => onNavigate('calendar')}
+                className="inline-flex items-center gap-1 text-[12.5px] font-medium cursor-pointer transition-colors hover:text-[var(--accent)]"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                Importieren
+                <span>Kalender</span>
+                <ArrowRight size={13} strokeWidth={1.5} />
               </button>
             </div>
 
@@ -822,7 +829,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               </div>
             ) : (
               <div className="mt-4">
-                {sortedSchedule.map((item) => {
+                {sortedSchedule.slice(0, 5).map((item) => {
                   const countdown = getDaysUntilLabel(item.date);
                   return (
                     <div
@@ -846,6 +853,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                           <span className="font-mono-num">
                             {formatShortDate(item.date)}
                           </span>
+                          {item.startTime && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono-num">
+                                {item.endTime
+                                  ? `${item.startTime}–${item.endTime}`
+                                  : item.startTime}
+                              </span>
+                            </>
+                          )}
+                          {item.room && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span>{item.room}</span>
+                            </>
+                          )}
                         </div>
                       </div>
                       <span
@@ -869,6 +892,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                     </div>
                   );
                 })}
+                {sortedSchedule.length > 5 && (
+                  <div
+                    className="border-t mt-3 pt-3"
+                    style={{ borderColor: 'var(--border-hairline)' }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('calendar')}
+                      className="inline-flex items-center gap-1 text-[12.5px] font-medium cursor-pointer transition-colors hover:underline"
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      <span>Alle {sortedSchedule.length} Termine im Kalender</span>
+                      <ArrowRight size={13} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </section>

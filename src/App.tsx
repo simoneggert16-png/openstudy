@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   BookOpen,
+  CalendarDays,
   Clock,
   Download,
   FolderInput,
@@ -18,6 +19,7 @@ import { useOpenStudyStore } from './hooks/useOpenStudyStore';
 import { usePwaInstall } from './hooks/usePwaInstall';
 import { ColorSchemeId, MainView, StudyLanguage, TutorMode } from './types';
 import { HomeDashboard } from './components/HomeDashboard';
+import { CalendarView } from './components/CalendarView';
 import { HermesScreenTeacherView } from './components/HermesScreenTeacherView';
 import { NotionWorkspace } from './components/NotionWorkspace';
 import { StudyTrainerView } from './components/StudyTrainerView';
@@ -35,6 +37,7 @@ const NAV_ITEMS: {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
 }[] = [
   { id: 'home', label: 'Übersicht', icon: LayoutDashboard },
+  { id: 'calendar', label: 'Kalender', icon: CalendarDays },
   { id: 'teacher', label: 'Hermes Lehrer', icon: MonitorPlay },
   { id: 'notes', label: 'Notizen', icon: BookOpen },
   { id: 'trainer', label: 'Karten & Quiz', icon: GraduationCap },
@@ -45,6 +48,7 @@ const NAV_ITEMS: {
 
 const VIEW_LABELS: Record<MainView, string> = {
   home: 'Übersicht',
+  calendar: 'Kalender & Agenda',
   teacher: 'Hermes Bildschirm-Lehrer',
   notes: 'Notizen',
   trainer: 'Karten & Quiz',
@@ -110,6 +114,7 @@ export default function App() {
     setObsidianNotes,
     toggleObsidianContext,
     addSchoolScheduleItems,
+    removeSchoolScheduleItem,
     addHermesMemory,
     removeHermesMemory,
     upsertHermesSkill,
@@ -158,6 +163,18 @@ export default function App() {
     const now = Date.now();
     return state.cards.filter((c) => c.due <= now).length;
   }, [state.cards]);
+
+  const upcomingScheduleCount = useMemo(() => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const limit = today + 90 * 24 * 60 * 60 * 1000;
+    return state.schoolSchedule.filter((item) => {
+      const parts = item.date.split('-').map(Number);
+      if (parts.length !== 3 || parts.some(Number.isNaN)) return false;
+      const t = new Date(parts[0], parts[1] - 1, parts[2]).getTime();
+      return t >= today && t <= limit;
+    }).length;
+  }, [state.schoolSchedule]);
 
   const activeScheme = useMemo(
     () => getColorSchemeById(hoveredSchemeId ?? state.colorScheme),
@@ -228,6 +245,8 @@ export default function App() {
             const count =
               item.id === 'trainer' && dueCardsCount > 0
                 ? String(dueCardsCount)
+                : item.id === 'calendar' && upcomingScheduleCount > 0
+                ? String(upcomingScheduleCount)
                 : item.id === 'notes' && state.notes.length > 0
                 ? String(state.notes.length)
                 : undefined;
@@ -580,6 +599,16 @@ export default function App() {
               onOpenSettings={() => openSettings('appearance')}
             />
           )}
+          {view === 'calendar' && (
+            <CalendarView
+              state={state}
+              onAddScheduleItems={addSchoolScheduleItems}
+              onRemoveScheduleItem={removeSchoolScheduleItem}
+              onAddPlanTasks={addPlanTasks}
+              onNavigate={navigate}
+              onOpenVoiceTutor={openVoiceTutor}
+            />
+          )}
           {view === 'teacher' && (
             <HermesScreenTeacherView
               state={state}
@@ -650,6 +679,7 @@ export default function App() {
               onAddSchoolScheduleItems={addSchoolScheduleItems}
               onUpdateProvider={updateProvider}
               onLaunchPortalSync={handleLaunchPortalSync}
+              onNavigate={navigate}
             />
           )}
         </main>

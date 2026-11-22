@@ -295,9 +295,33 @@ export function useOpenStudyStore() {
   }, []);
 
   const addSchoolScheduleItems = useCallback((items: SchoolScheduleItem[]) => {
+    if (!items.length) return;
+    setState((s) => {
+      const existingKeys = new Set(
+        s.schoolSchedule.map(
+          (e) =>
+            `${e.date}|${(e.startTime || '').trim()}|${e.title.trim().toLowerCase().slice(0, 60)}`
+        )
+      );
+      const uniqueNew: SchoolScheduleItem[] = [];
+      for (const item of items) {
+        const key = `${item.date}|${(item.startTime || '').trim()}|${item.title.trim().toLowerCase().slice(0, 60)}`;
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        uniqueNew.push(item);
+      }
+      if (uniqueNew.length === 0) return s;
+      return {
+        ...s,
+        schoolSchedule: [...uniqueNew, ...s.schoolSchedule],
+      };
+    });
+  }, []);
+
+  const removeSchoolScheduleItem = useCallback((id: string) => {
     setState((s) => ({
       ...s,
-      schoolSchedule: [...items, ...s.schoolSchedule],
+      schoolSchedule: s.schoolSchedule.filter((item) => item.id !== id),
     }));
   }, []);
 
@@ -387,6 +411,7 @@ export function useOpenStudyStore() {
     setObsidianNotes,
     toggleObsidianContext,
     addSchoolScheduleItems,
+    removeSchoolScheduleItem,
     addHermesMemory,
     removeHermesMemory,
     upsertHermesSkill,

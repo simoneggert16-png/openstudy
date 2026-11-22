@@ -1,5 +1,6 @@
 export type MainView =
   | 'home'
+  | 'calendar'
   | 'teacher'
   | 'notes'
   | 'trainer'
@@ -184,12 +185,19 @@ export interface VoicePreferences {
   stance: AgentStance;
 }
 
+export type ScheduleItemCategory = 'exam' | 'homework' | 'lesson' | 'event';
+
 export interface SchoolScheduleItem {
   id: string;
   title: string;
-  date: string;
+  date: string; // YYYY-MM-DD
   courseTitle: string;
-  source: 'ics' | 'manual' | 'smart-import';
+  source: 'ics' | 'manual' | 'smart-import' | 'portal-sync';
+  startTime?: string; // HH:MM
+  endTime?: string; // HH:MM
+  category?: ScheduleItemCategory;
+  room?: string;
+  notes?: string;
 }
 
 export interface OpenStudyState {

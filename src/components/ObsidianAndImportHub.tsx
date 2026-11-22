@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowRight,
   BookOpen,
   Calendar,
   CalendarDays,
@@ -13,6 +14,7 @@ import {
   FileText,
   FileUp,
   FolderOpen,
+  Globe,
   GraduationCap,
   KeyRound,
   Layers,
@@ -28,6 +30,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  MainView,
   NoteBlock,
   ObsidianNote,
   OpenStudyState,
@@ -37,6 +40,12 @@ import {
   StudyNotePage,
   SubjectCourse,
 } from '../types';
+import {
+  closePortalSession,
+  extractPortalAgenda,
+  getPortalSessionStatus,
+  startPortalSession,
+} from '../services/portalSync';
 
 interface FsFileHandleLike {
   kind: 'file';
@@ -142,6 +151,16 @@ export interface ObsidianAndImportHubProps {
   onAddSchoolScheduleItems: (items: SchoolScheduleItem[]) => void;
   onUpdateProvider: (patch: Partial<ProviderConfig>) => void;
   onLaunchPortalSync?: (portalUrl: string) => void;
+  onNavigate?: (view: MainView) => void;
+}
+
+interface ActivePortalSession {
+  sessionId: string;
+  browserName: string;
+  portalUrl: string;
+  currentUrl: string;
+  pageTitle: string;
+  looksLikeLogin: boolean;
 }
 
 type HubTab = 'obsidian' | 'school' | 'notion';
@@ -629,6 +648,7 @@ export function ObsidianAndImportHub({
   onAddSchoolScheduleItems,
   onUpdateProvider,
   onLaunchPortalSync,
+  onNavigate,
 }: ObsidianAndImportHubProps) {
   const [activeTab, setActiveTab] = useState<HubTab>('obsidian');
 
@@ -669,6 +689,14 @@ export function ObsidianAndImportHub({
 
   // --- Tab 2: School Portal & Auto-Sync state ---
   const [portalMessage, setPortalMessage] = useState<string | null>(null);
+  const [portalSession, setPortalSession] = useState<ActivePortalSession | null>(null);
+  const [portalStarting, setPortalStarting] = useState(false);
+  const [portalExtracting, setPortalExtracting] = useState(false);
+  const [portalBridgeFallbackUrl, setPortalBridgeFallbackUrl] = useState<string | null>(null);
+  const [portalImportSummary, setPortalImportSummary] = useState<{
+    count: number;
+    pagesCount: number;
+  } | null>(null);
   const [syncRunning, setSyncRunning] = useState(false);
   const [syncSavingConfig, setSyncSavingConfig] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -746,7 +774,12 @@ export function ObsidianAndImportHub({
   }, [state.obsidianNotes, obsidianSearch, onlySelectedContext]);
 
   const sortedSchedule = useMemo(
-    () => [...state.schoolSchedule].sort((a, b) => a.date.localeCompare(b.date)),
+    () =>
+      [...state.schoolSchedule].sort((a, b) => {
+        const dateCmp = a.date.localeCompare(b.date);
+        if (dateCmp !== 0) return dateCmp;
+        return (a.startTime ?? '').localeCompare(b.startTime ?? '');
+      }),
     [state.schoolSchedule]
   );
 
@@ -1196,26 +1229,196 @@ export function ObsidianAndImportHub({
   };
 
   // --- Handlers: Tab 2 (School Portal & Auto-Sync) ---
+  const activePortalSessionId = portalSession?.sessionId ?? null;
+
+  useEffect(() => {
+    if (!activePortalSessionId || portalExtracting) return;
+    let cancelled = false;
+    let inFlight = false;
+
+    const pollStatus = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const status = await getPortalSessionStatus(
+          normalizedBridgeUrl,
+          activePortalSessionId
+        );
+        if (cancelled) return;
+        if (!status.ok) return;
+        if (!status.active) {
+          setPortalSession((prev) =>
+            prev?.sessionId === activePortalSessionId ? null : prev
+          );
+          setPortalMessage('Das Portal-Fenster wurde geschlossen.');
+          return;
+        }
+        setPortalSession((prev) => {
+          if (!prev || prev.sessionId !== activePortalSessionId) return prev;
+          return {
+            ...prev,
+            currentUrl: status.currentUrl || prev.currentUrl,
+            pageTitle: status.pageTitle || prev.pageTitle,
+            looksLikeLogin: Boolean(status.looksLikeLogin),
+          };
+        });
+      } catch {
+        // Keep active session visible on transient poll hiccups
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void pollStatus();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activePortalSessionId, portalExtracting, normalizedBridgeUrl]);
+
   const handleOpenSchoolPortal = () => {
     const validUrl = validateHttpsPortalUrl(state.provider.schoolPortalUrl);
     if (!validUrl) {
       setPortalMessage(
-        'Bitte gib eine gültige Webadresse ein, zum Beispiel portal.schule.ch.'
+        'Bitte gib eine gültige Webadresse ein, zum Beispiel portal.schule.example.'
       );
+      setPortalBridgeFallbackUrl(null);
       return;
     }
     setPortalMessage(null);
+    setPortalBridgeFallbackUrl(null);
     if (validUrl !== state.provider.schoolPortalUrl) {
       onUpdateProvider({ schoolPortalUrl: validUrl });
     }
     window.open(validUrl, '_blank', 'noopener,noreferrer');
   };
 
-  const handleTriggerHermesPortalScan = () => {
-    const trimmed = state.provider.schoolPortalUrl.trim();
-    const validUrl = validateHttpsPortalUrl(trimmed);
+  const handleStartHermesPortalReader = async () => {
+    const validUrl = validateHttpsPortalUrl(state.provider.schoolPortalUrl);
+    if (!validUrl) {
+      setPortalMessage(
+        'Bitte gib eine gültige Webadresse ein, zum Beispiel portal.schule.example.'
+      );
+      setPortalBridgeFallbackUrl(null);
+      return;
+    }
+    if (validUrl !== state.provider.schoolPortalUrl) {
+      onUpdateProvider({ schoolPortalUrl: validUrl });
+    }
+
     setPortalMessage(null);
-    onLaunchPortalSync?.(validUrl ?? trimmed);
+    setPortalBridgeFallbackUrl(null);
+    setPortalImportSummary(null);
+
+    if (portalSession) {
+      const prevId = portalSession.sessionId;
+      setPortalSession(null);
+      void closePortalSession(normalizedBridgeUrl, prevId).catch(() => undefined);
+    }
+
+    setPortalStarting(true);
+    try {
+      const res = await startPortalSession(normalizedBridgeUrl, validUrl);
+      if (res.ok && res.sessionId) {
+        setBridgeReachable(true);
+        setPortalSession({
+          sessionId: res.sessionId,
+          browserName: res.browserName || 'Chrome',
+          portalUrl: res.portalUrl || validUrl,
+          currentUrl: res.currentUrl || res.portalUrl || validUrl,
+          pageTitle: res.pageTitle || '',
+          looksLikeLogin: res.looksLikeLogin ?? true,
+        });
+        return;
+      }
+
+      const probe = await fetchBridgeJson<{ ok?: boolean }>(
+        `${normalizedBridgeUrl}/api/sync/status`,
+        { method: 'GET' },
+        1800
+      );
+      if (!probe.reachable) {
+        setBridgeReachable(false);
+        setPortalBridgeFallbackUrl(validUrl);
+        setPortalMessage(
+          'Für das automatische Einlesen direkt im PC-Browser wird die lokale Begleit-Bridge benötigt (npm run bridge).'
+        );
+      } else {
+        setBridgeReachable(true);
+        setPortalBridgeFallbackUrl(validUrl);
+        setPortalMessage(
+          res.error || 'Das Portal-Fenster konnte nicht automatisch geöffnet werden.'
+        );
+      }
+    } catch {
+      setBridgeReachable(false);
+      setPortalBridgeFallbackUrl(validUrl);
+      setPortalMessage(
+        'Für das automatische Einlesen direkt im PC-Browser wird die lokale Begleit-Bridge benötigt (npm run bridge).'
+      );
+    } finally {
+      setPortalStarting(false);
+    }
+  };
+
+  const handleExtractPortalAgenda = async () => {
+    if (!portalSession || portalExtracting) return;
+    setPortalExtracting(true);
+    setPortalMessage(null);
+    setPortalImportSummary(null);
+    try {
+      const res = await extractPortalAgenda({
+        bridgeUrl: normalizedBridgeUrl,
+        sessionId: portalSession.sessionId,
+        geminiApiKey: state.provider.geminiApiKey.trim() || undefined,
+        horizonDays: 90,
+        closeAfter: true,
+      });
+
+      if (!res.ok) {
+        setPortalMessage(
+          res.error || 'Die Portal-Agenda konnte nicht ausgelesen werden.'
+        );
+        return;
+      }
+
+      const extractedItems = Array.isArray(res.items) ? res.items : [];
+      const visitedCount = Array.isArray(res.visitedPages)
+        ? res.visitedPages.length
+        : typeof res.visitedPages === 'number'
+          ? res.visitedPages
+          : 1;
+
+      if (extractedItems.length > 0) {
+        onAddSchoolScheduleItems(extractedItems);
+      }
+
+      setPortalSession(null);
+      setPortalImportSummary({
+        count: extractedItems.length,
+        pagesCount: Math.max(1, visitedCount),
+      });
+    } catch {
+      setPortalMessage(
+        'Die Verbindung zur lokalen Begleit-Bridge wurde unterbrochen. Bitte versuche es erneut.'
+      );
+    } finally {
+      setPortalExtracting(false);
+    }
+  };
+
+  const handleClosePortalSession = async () => {
+    if (!portalSession) return;
+    const sid = portalSession.sessionId;
+    setPortalSession(null);
+    try {
+      await closePortalSession(normalizedBridgeUrl, sid);
+    } catch {
+      // Ignore cleanup errors if window was already closed
+    }
   };
 
   const handleToggleAutoSync = async () => {
@@ -1287,7 +1490,7 @@ export function ObsidianAndImportHub({
       if (!res.reachable) {
         setBridgeReachable(false);
         setSyncMessage(
-          'Lokale Begleit-Bridge nicht erreichbar. Du kannst Termine jederzeit über «Mit Hermes 30 Tage einlesen» oder manuell übernehmen.'
+          'Lokale Begleit-Bridge nicht erreichbar. Du kannst Termine jederzeit über «Mit Hermes 3 Monate einlesen» oder manuell übernehmen.'
         );
         return;
       }
@@ -2310,14 +2513,14 @@ export function ObsidianAndImportHub({
       {/* ================================================================= */}
       {activeTab === 'school' && (
         <div className="space-y-6">
-          {/* 1. Einfacher Schulportal-Link (1 Feld) */}
+          {/* 1. Automatischer Hermes Portal-Reader (1 Feld) */}
           <section className="surface-card p-6 space-y-5">
             <div className="space-y-1">
               <h2 className="font-display font-normal text-[22px] leading-snug text-[var(--text-primary)]">
                 Schulportal
               </h2>
               <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
-                Öffne dein Schul- oder Uni-Portal normal im Browser und melde dich mit deinem eigenen Konto an. Hermes liest anschliessend die nächsten 3 Monate (90 Tage) vom geteilten Fenster direkt in deinen Prüfungsplan ein.
+                Gib den Link zu deinem Schul- oder Uni-Portal ein. Hermes öffnet ein echtes Browser-Fenster auf deinem PC — du meldest dich normal an und liest anschliessend die nächsten 3 Monate (90 Tage) automatisch in deinen Kalender ein.
               </p>
             </div>
 
@@ -2337,11 +2540,12 @@ export function ObsidianAndImportHub({
                   onChange={(e) => {
                     onUpdateProvider({ schoolPortalUrl: e.target.value });
                     if (portalMessage) setPortalMessage(null);
+                    if (portalBridgeFallbackUrl) setPortalBridgeFallbackUrl(null);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      handleOpenSchoolPortal();
+                      void handleStartHermesPortalReader();
                     }
                   }}
                   placeholder="portal.schule.example"
@@ -2352,27 +2556,172 @@ export function ObsidianAndImportHub({
               <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={handleOpenSchoolPortal}
+                  onClick={() => void handleStartHermesPortalReader()}
+                  disabled={portalStarting || portalExtracting}
                   className="btn-accent h-10 px-4 text-[13.5px]"
                 >
-                  <ExternalLink size={15} strokeWidth={1.5} />
-                  <span>Portal öffnen &amp; anmelden</span>
+                  {portalStarting ? (
+                    <>
+                      <Loader2 size={15} strokeWidth={1.5} className="animate-spin" />
+                      <span>Öffne Browser...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Globe size={15} strokeWidth={1.5} />
+                      <span>Mit Hermes 3 Monate einlesen</span>
+                    </>
+                  )}
                 </button>
                 <button
                   type="button"
-                  onClick={handleTriggerHermesPortalScan}
+                  onClick={handleOpenSchoolPortal}
                   className="btn-secondary h-10 px-4 text-[13.5px]"
                 >
-                  <MonitorPlay size={15} strokeWidth={1.5} />
-                  <span>Mit Hermes 3 Monate einlesen</span>
+                  <ExternalLink size={15} strokeWidth={1.5} />
+                  <span>Nur im Browser öffnen</span>
                 </button>
               </div>
             </div>
 
+            {/* Live Portal Session Bar (flat hairline + left accent rule, zero nested boxes) */}
+            {portalSession && (
+              <div
+                className="border-t pt-4"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div
+                  className="border-l-2 pl-4 space-y-3"
+                  style={{
+                    borderColor: portalSession.looksLikeLogin
+                      ? 'var(--accent-warm)'
+                      : 'var(--accent)',
+                  }}
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className="h-2 w-2 rounded-full shrink-0"
+                        style={{
+                          backgroundColor: portalSession.looksLikeLogin
+                            ? 'var(--accent-warm)'
+                            : 'var(--accent)',
+                        }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-[13.5px] font-medium text-[var(--text-primary)]">
+                        {portalExtracting
+                          ? 'Hermes liest deine Agenda der nächsten 3 Monate ein...'
+                          : portalSession.looksLikeLogin
+                            ? `${portalSession.browserName}-Fenster geöffnet · Melde dich dort normal mit deinem Konto an.`
+                            : 'Angemeldet erkannt — bereit zum Einlesen'}
+                      </span>
+                    </div>
+
+                    {(portalSession.pageTitle || portalSession.currentUrl) && (
+                      <div className="pl-[18px] flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-[var(--text-muted)]">
+                        {portalSession.pageTitle && (
+                          <span className="text-[var(--text-secondary)] truncate max-w-full">
+                            {portalSession.pageTitle}
+                          </span>
+                        )}
+                        {portalSession.pageTitle && portalSession.currentUrl && (
+                          <span aria-hidden="true">·</span>
+                        )}
+                        {portalSession.currentUrl && (
+                          <span className="font-mono-num truncate max-w-full">
+                            {portalSession.currentUrl}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pl-[18px] flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleExtractPortalAgenda()}
+                      disabled={portalExtracting}
+                      className="btn-accent h-9 px-4 text-[13px]"
+                    >
+                      {portalExtracting ? (
+                        <>
+                          <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+                          <span>Lese Agenda ein...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CalendarDays size={14} strokeWidth={1.5} />
+                          <span>Bin angemeldet — Agenda jetzt einlesen</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleClosePortalSession()}
+                      disabled={portalExtracting}
+                      className="btn-ghost h-9 px-3 text-[13px]"
+                    >
+                      <X size={14} strokeWidth={1.5} />
+                      <span>Fenster schliessen</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Portal Import Summary */}
+            {portalImportSummary && (
+              <div
+                className="border-t pt-4"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="border-l-2 border-[var(--accent)] pl-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <p className="text-[13.5px] text-[var(--text-primary)] leading-relaxed">
+                    {portalImportSummary.count > 0
+                      ? `${portalImportSummary.count} ${portalImportSummary.count === 1 ? 'Termin' : 'Termine'} der nächsten 3 Monate aus ${portalImportSummary.pagesCount} ${portalImportSummary.pagesCount === 1 ? 'Portal-Seite' : 'Portal-Seiten'} eingelesen (inkl. Prüfungen & Agenda).`
+                      : `Aus ${portalImportSummary.pagesCount} ${portalImportSummary.pagesCount === 1 ? 'Portal-Seite' : 'Portal-Seiten'} wurden noch keine Termine für die nächsten 3 Monate erkannt. Öffne im Portal die Agenda- oder Prüfungsseite und versuche es erneut.`}
+                  </p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {portalImportSummary.count > 0 && onNavigate && (
+                      <button
+                        type="button"
+                        onClick={() => onNavigate('calendar')}
+                        className="btn-accent h-8 px-3.5 text-[12.5px]"
+                      >
+                        <span>Im Kalender ansehen</span>
+                        <ArrowRight size={13} strokeWidth={1.5} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPortalImportSummary(null)}
+                      aria-label="Zusammenfassung schliessen"
+                      className="p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                    >
+                      <X size={14} strokeWidth={1.5} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Calm Error / Bridge-Offline Fallback */}
             {portalMessage && (
-              <p className="border-l-2 border-[var(--accent-warm)] pl-3 py-0.5 text-[13px] text-[var(--text-primary)]">
-                {portalMessage}
-              </p>
+              <div className="border-l-2 border-[var(--accent-warm)] pl-3.5 py-0.5 space-y-2.5">
+                <p className="text-[13px] text-[var(--text-primary)] leading-relaxed">
+                  {portalMessage}
+                </p>
+                {portalBridgeFallbackUrl && onLaunchPortalSync && (
+                  <button
+                    type="button"
+                    onClick={() => onLaunchPortalSync(portalBridgeFallbackUrl)}
+                    className="btn-secondary h-8 px-3.5 text-[12.5px]"
+                  >
+                    <MonitorPlay size={14} strokeWidth={1.5} />
+                    <span>Stattdessen über Bildschirm-Lehrer einlesen</span>
+                  </button>
+                )}
+              </div>
             )}
           </section>
 
@@ -2526,9 +2875,21 @@ export function ObsidianAndImportHub({
                   ({sortedSchedule.length})
                 </span>
               </h2>
-              <span className="text-[12.5px] text-[var(--text-muted)]">
-                Übersicht aus Hermes, Auto-Sync und Importen
-              </span>
+              <div className="flex items-center gap-3.5">
+                <span className="hidden sm:inline text-[12.5px] text-[var(--text-muted)]">
+                  Übersicht aus Hermes, Auto-Sync und Importen
+                </span>
+                {onNavigate && (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('calendar')}
+                    className="inline-flex items-center gap-1 text-[13px] font-medium cursor-pointer text-[var(--accent)] hover:underline"
+                  >
+                    <span>Kalender öffnen</span>
+                    <ArrowRight size={13} strokeWidth={1.5} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {sortedSchedule.length === 0 ? (
@@ -2542,9 +2903,11 @@ export function ObsidianAndImportHub({
                   const sourceLabel =
                     item.source === 'ics'
                       ? 'Kalender .ics'
-                      : item.source === 'smart-import'
-                        ? 'Portal / Sync'
-                        : 'Manuell';
+                      : item.source === 'portal-sync'
+                        ? 'Portal-Sync'
+                        : item.source === 'smart-import'
+                          ? 'Portal / Sync'
+                          : 'Manuell';
 
                   return (
                     <div
@@ -2559,8 +2922,26 @@ export function ObsidianAndImportHub({
                           <div className="text-[14px] font-medium text-[var(--text-primary)] truncate">
                             {item.title}
                           </div>
-                          <div className="text-[12px] text-[var(--text-muted)]">
-                            {item.courseTitle} · {sourceLabel}
+                          <div className="text-[12px] text-[var(--text-muted)] flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                            <span>{item.courseTitle}</span>
+                            {item.startTime && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="font-mono-num">
+                                  {item.endTime
+                                    ? `${item.startTime}–${item.endTime}`
+                                    : item.startTime}
+                                </span>
+                              </>
+                            )}
+                            {item.room && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span>{item.room}</span>
+                              </>
+                            )}
+                            <span aria-hidden="true">·</span>
+                            <span>{sourceLabel}</span>
                           </div>
                         </div>
                       </div>
