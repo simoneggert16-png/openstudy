@@ -2828,14 +2828,18 @@ function sanitizeSyncPortalUrl(rawUrl) {
   if (trimmed.length > 300) {
     return { ok: false, error: 'Feld "portalUrl" ist zu lang (max. 300 Zeichen).' };
   }
+  const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) ? trimmed : `https://${trimmed}`;
   let parsed;
   try {
-    parsed = new URL(trimmed);
+    parsed = new URL(withScheme);
   } catch {
-    return { ok: false, error: 'Ungültige "portalUrl". Erwartet wird eine http:// oder https:// Adresse.' };
+    return { ok: false, error: 'Ungültige "portalUrl". Erwartet wird eine gültige Webadresse.' };
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return { ok: false, error: 'Für "portalUrl" sind nur http:// und https:// erlaubt.' };
+  }
+  if (!parsed.hostname || !parsed.hostname.includes('.')) {
+    return { ok: false, error: 'Ungültige Domain in "portalUrl".' };
   }
   if (parsed.username || parsed.password) {
     return { ok: false, error: 'Zugangsdaten in "portalUrl" sind nicht erlaubt.' };

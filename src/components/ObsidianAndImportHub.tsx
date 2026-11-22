@@ -195,10 +195,17 @@ function todayIso(): string {
 
 function validateHttpsPortalUrl(raw: string): string | null {
   const trimmed = raw.trim();
-  if (!trimmed) return null;
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  const withScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
   try {
-    const parsed = new URL(trimmed);
+    const parsed = new URL(withScheme);
+    if (parsed.protocol === 'http:') {
+      parsed.protocol = 'https:';
+    }
     if (parsed.protocol !== 'https:') return null;
+    if (!parsed.hostname || !parsed.hostname.includes('.')) return null;
     return parsed.toString();
   } catch {
     return null;
@@ -1193,7 +1200,7 @@ export function ObsidianAndImportHub({
     const validUrl = validateHttpsPortalUrl(state.provider.schoolPortalUrl);
     if (!validUrl) {
       setPortalMessage(
-        'Bitte gib eine gültige Webadresse ein, die mit https:// beginnt.'
+        'Bitte gib eine gültige Webadresse ein, zum Beispiel portal.schule.ch.'
       );
       return;
     }
@@ -2324,13 +2331,20 @@ export function ObsidianAndImportHub({
                 </label>
                 <input
                   id="school-portal-url-input"
-                  type="url"
+                  type="text"
+                  inputMode="url"
                   value={state.provider.schoolPortalUrl}
                   onChange={(e) => {
                     onUpdateProvider({ schoolPortalUrl: e.target.value });
                     if (portalMessage) setPortalMessage(null);
                   }}
-                  placeholder="https://portal.schule.example"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleOpenSchoolPortal();
+                    }
+                  }}
+                  placeholder="portal.schule.example"
                   className="w-full h-10 px-3.5 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
               </div>
