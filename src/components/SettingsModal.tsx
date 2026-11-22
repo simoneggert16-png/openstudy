@@ -2,115 +2,74 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   Check,
-  CheckCircle2,
-  Cpu,
-  Database,
+  ChevronRight,
+  Copy,
   Download,
   ExternalLink,
   Eye,
   EyeOff,
-  HardDrive,
-  KeyRound,
   Loader2,
-  Lock,
-  RefreshCw,
-  RotateCcw,
-  Settings2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  Terminal,
-  Unlock,
-  Wand2,
   X,
 } from 'lucide-react';
+import { COLOR_SCHEMES } from '../data/colorSchemes';
 import {
   checkLocalBridge,
   FREE_GEMINI_TEXT_MODELS,
   FREE_LIVE_MODELS,
   testGeminiApiKey,
 } from '../services/providers';
-import { OpenStudyState, ProviderConfig, ProviderKind } from '../types';
+import {
+  ColorSchemeId,
+  OpenStudyState,
+  ProviderConfig,
+  ProviderKind,
+} from '../types';
 
 export interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
   state: OpenStudyState;
   onUpdateProvider: (patch: Partial<ProviderConfig>) => void;
+  onSetColorScheme: (scheme: ColorSchemeId) => void;
+  onSetDailyGoalMinutes: (minutes: number) => void;
   onResetToDemo: () => void;
   onReopenOnboarding: () => void;
+  canInstallPwa: boolean;
+  isPwaInstalled: boolean;
+  onInstallPwa: () => Promise<boolean>;
 }
 
-type SettingsTab = 'providers' | 'privacy';
+type SettingsTab = 'appearance' | 'ai' | 'data';
 
-const PROVIDER_OPTIONS: Array<{
-  id: ProviderKind;
-  title: string;
-  subtitle: string;
-  costTag: string;
-}> = [
-  {
-    id: 'gemini-free',
-    title: 'Google Gemini Free Tier',
-    subtitle: 'Echtzeit-Voice-Tutor & Text-KI über Google AI Studio',
-    costTag: '0 CHF Free Tier',
-  },
-  {
-    id: 'ollama',
-    title: 'Ollama (Lokal & Gratis)',
-    subtitle: '100 % offline auf deinem eigenen Rechner',
-    costTag: '0 CHF Offline',
-  },
-  {
-    id: 'cli-bridge',
-    title: 'Lokale Agent-Bridge (Antigravity / Claude Code / Codex)',
-    subtitle: 'Nutzt deine lokal installierten CLI-Agents über 127.0.0.1',
-    costTag: 'Eigene CLI',
-  },
-  {
-    id: 'openai-compatible',
-    title: 'OpenAI-kompatibel / OpenRouter',
-    subtitle: 'Beliebige OpenAI-kompatible Endpunkte & :free-Modelle',
-    costTag: 'BYOK / :free',
-  },
-  {
-    id: 'anthropic',
-    title: 'Anthropic Claude',
-    subtitle: 'Direkte Verbindung mit eigenem Anthropic API-Key',
-    costTag: 'BYOK (Kostenpflichtig)',
-  },
+const DAILY_GOALS = [15, 30, 45, 60, 90] as const;
+
+const ADVANCED_PROVIDERS: Array<{ id: ProviderKind; label: string }> = [
+  { id: 'gemini-free', label: 'Google Gemini' },
+  { id: 'ollama', label: 'Ollama lokal' },
+  { id: 'cli-bridge', label: 'CLI-Bridge' },
+  { id: 'openai-compatible', label: 'OpenAI / OpenRouter' },
+  { id: 'anthropic', label: 'Anthropic Claude' },
 ];
 
 const BRIDGE_TOOLS: Array<{
   id: ProviderConfig['bridgeTool'];
   label: string;
-  cliCommand: string;
-  note: string;
+  cli: string;
 }> = [
-  {
-    id: 'antigravity',
-    label: 'Antigravity',
-    cliCommand: 'agy',
-    note: 'Verbindet lokal angemeldetes Antigravity CLI',
-  },
-  {
-    id: 'claude',
-    label: 'Claude Code',
-    cliCommand: 'claude',
-    note: 'Verbindet lokal angemeldetes Claude Code CLI',
-  },
-  {
-    id: 'codex',
-    label: 'Codex CLI',
-    cliCommand: 'codex',
-    note: 'Verbindet lokal angemeldetes ChatGPT Codex CLI',
-  },
+  { id: 'antigravity', label: 'Antigravity', cli: 'agy' },
+  { id: 'claude', label: 'Claude Code', cli: 'claude' },
+  { id: 'codex', label: 'Codex CLI', cli: 'codex' },
 ];
+
+const FIELD_STYLE: React.CSSProperties = {
+  backgroundColor: 'var(--bg-page)',
+  border: '1px solid var(--border-strong)',
+  color: 'var(--text-primary)',
+};
 
 function isLocalhostUrl(rawUrl: string): boolean {
   try {
-    const parsed = new URL(rawUrl);
-    const host = parsed.hostname.toLowerCase();
+    const host = new URL(rawUrl).hostname.toLowerCase();
     return (
       host === 'localhost' ||
       host === '127.0.0.1' ||
@@ -123,30 +82,105 @@ function isLocalhostUrl(rawUrl: string): boolean {
   }
 }
 
+interface SecretInputProps {
+  id?: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  ariaLabel?: string;
+  onEnter?: () => void;
+}
+
+const SecretInput: React.FC<SecretInputProps> = ({
+  id,
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  onEnter,
+}) => {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative flex-1">
+      <input
+        id={id}
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && onEnter) onEnter();
+        }}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        autoComplete="off"
+        spellCheck={false}
+        className="font-mono-num h-9 w-full rounded-[10px] pl-3 pr-9 text-[13px]"
+        style={FIELD_STYLE}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visible ? 'Key verbergen' : 'Key anzeigen'}
+        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1"
+        style={{ color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+      >
+        {visible ? <EyeOff size={15} strokeWidth={1.5} /> : <Eye size={15} strokeWidth={1.5} />}
+      </button>
+    </div>
+  );
+};
+
+interface StatusLineProps {
+  tone: 'positive' | 'negative' | 'warning';
+  message: string;
+}
+
+const StatusLine: React.FC<StatusLineProps> = ({ tone, message }) => (
+  <p
+    role="status"
+    className="flex items-start gap-1.5 text-[12.5px] leading-snug"
+    style={{
+      color:
+        tone === 'positive'
+          ? 'var(--positive)'
+          : tone === 'warning'
+            ? 'var(--warning)'
+            : 'var(--negative)',
+    }}
+  >
+    {tone === 'positive' ? (
+      <Check size={14} strokeWidth={1.75} className="mt-0.5 shrink-0" />
+    ) : (
+      <AlertCircle size={14} strokeWidth={1.5} className="mt-0.5 shrink-0" />
+    )}
+    <span>{message}</span>
+  </p>
+);
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   open,
   onClose,
   state,
   onUpdateProvider,
+  onSetColorScheme,
+  onSetDailyGoalMinutes,
   onResetToDemo,
   onReopenOnboarding,
+  canInstallPwa,
+  isPwaInstalled,
+  onInstallPwa,
 }) => {
-  const [tab, setTab] = useState<SettingsTab>('providers');
-
-  const [showGeminiKey, setShowGeminiKey] = useState(false);
-  const [showCustomKey, setShowCustomKey] = useState(false);
-  const [showAnthropicKey, setShowAnthropicKey] = useState(false);
-
-  const [testingGemini, setTestingGemini] = useState(false);
-  const [geminiResult, setGeminiResult] = useState<{ ok: boolean; message: string } | null>(
-    null
+  const [tab, setTab] = useState<SettingsTab>('appearance');
+  const [advancedOpen, setAdvancedOpen] = useState(
+    state.provider.activeTextProvider !== 'gemini-free'
   );
 
+  const [testingGemini, setTestingGemini] = useState(false);
+  const [geminiResult, setGeminiResult] = useState<{ ok: boolean; message: string } | null>(null);
+
   const [checkingBridge, setCheckingBridge] = useState(false);
-  const [bridgeResult, setBridgeResult] = useState<{
-    online: boolean;
-    tools: string[];
-  } | null>(null);
+  const [bridgeResult, setBridgeResult] = useState<{ online: boolean; tools: string[] } | null>(null);
+  const [copiedBridgeCmd, setCopiedBridgeCmd] = useState(false);
 
   const [checkingOllama, setCheckingOllama] = useState(false);
   const [ollamaResult, setOllamaResult] = useState<{
@@ -155,24 +189,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     models: string[];
   } | null>(null);
 
+  const [installingPwa, setInstallingPwa] = useState(false);
+  const [pwaFeedback, setPwaFeedback] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
 
   useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
+    if (!open) {
+      setConfirmReset(false);
+      return;
+    }
+    if (state.provider.activeTextProvider !== 'gemini-free') {
+      setAdvancedOpen(true);
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose, state.provider.activeTextProvider]);
 
   const storageSizeKb = useMemo(() => {
     try {
-      const bytes = new Blob([JSON.stringify(state)]).size;
-      return Math.max(1, Math.round(bytes / 1024));
+      return Math.max(1, Math.round(new Blob([JSON.stringify(state)]).size / 1024));
     } catch {
       return 1;
     }
@@ -182,12 +221,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const { provider } = state;
 
+  const openaiBlockedByFreeLock =
+    provider.freeOnlyLock &&
+    !isLocalhostUrl(provider.customEndpoint) &&
+    !provider.customModel.trim().toLowerCase().endsWith(':free');
+
   const handleTestGemini = async () => {
+    if (!provider.geminiApiKey.trim() || testingGemini) return;
     setTestingGemini(true);
     setGeminiResult(null);
     try {
-      const res = await testGeminiApiKey(provider.geminiApiKey);
-      setGeminiResult(res);
+      setGeminiResult(await testGeminiApiKey(provider.geminiApiKey));
     } finally {
       setTestingGemini(false);
     }
@@ -196,10 +240,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleCheckBridge = async () => {
     setCheckingBridge(true);
     try {
-      const res = await checkLocalBridge(provider.bridgeUrl);
-      setBridgeResult(res);
+      setBridgeResult(await checkLocalBridge(provider.bridgeUrl));
     } finally {
       setCheckingBridge(false);
+    }
+  };
+
+  const handleCopyBridgeCommand = async () => {
+    try {
+      await navigator.clipboard.writeText('npm run bridge');
+      setCopiedBridgeCmd(true);
+      window.setTimeout(() => setCopiedBridgeCmd(false), 2000);
+    } catch {
+      setCopiedBridgeCmd(false);
     }
   };
 
@@ -210,21 +263,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 2500);
     try {
-      const res = await fetch(`${baseUrl}/api/tags`, {
-        method: 'GET',
-        signal: controller.signal,
-      });
+      const res = await fetch(`${baseUrl}/api/tags`, { method: 'GET', signal: controller.signal });
       if (!res.ok) {
-        setOllamaResult({
-          ok: false,
-          message: `Ollama antwortete mit Status ${res.status}.`,
-          models: [],
-        });
+        setOllamaResult({ ok: false, message: `Ollama antwortete mit Status ${res.status}.`, models: [] });
         return;
       }
-      const data = (await res.json().catch(() => ({}))) as {
-        models?: Array<{ name?: string }>;
-      };
+      const data = (await res.json().catch(() => ({}))) as { models?: Array<{ name?: string }> };
       const models = (data.models ?? [])
         .map((m) => m.name)
         .filter((name): name is string => typeof name === 'string');
@@ -232,24 +276,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         ok: true,
         message:
           models.length > 0
-            ? `Ollama erreichbar (${models.length} lokale Modelle gefunden).`
-            : 'Ollama erreichbar. Lade bei Bedarf ein Modell, z. B. "ollama pull gemma3:4b".',
+            ? `Erreichbar (${models.length} lokale Modelle gefunden).`
+            : 'Erreichbar. Es ist noch kein lokales Modell geladen.',
         models,
       });
     } catch {
-      setOllamaResult({
-        ok: false,
-        message: `Unter ${baseUrl} nicht erreichbar. Starte lokal "ollama serve".`,
-        models: [],
-      });
+      setOllamaResult({ ok: false, message: `Unter ${baseUrl} nicht erreichbar.`, models: [] });
     } finally {
       window.clearTimeout(timer);
       setCheckingOllama(false);
     }
   };
 
+  const handleInstallPwa = async () => {
+    if (installingPwa) return;
+    setInstallingPwa(true);
+    setPwaFeedback(null);
+    try {
+      const accepted = await onInstallPwa();
+      setPwaFeedback(
+        accepted
+          ? 'Installation gestartet.'
+          : 'Installation abgebrochen — du kannst sie jederzeit erneut starten.'
+      );
+    } finally {
+      setInstallingPwa(false);
+    }
+  };
+
   const handleExportJson = () => {
-    // Strip all sensitive API keys & tokens automatically before downloading
     const sanitizedBackup = {
       exportedAt: new Date().toISOString(),
       app: 'OpenStudy',
@@ -266,36 +321,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       },
     };
 
-    const blob = new Blob([JSON.stringify(sanitizedBackup, null, 2)], {
-      type: 'application/json',
-    });
+    const blob = new Blob([JSON.stringify(sanitizedBackup, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const datePart = new Date().toISOString().slice(0, 10);
-    a.href = url;
-    a.download = `openstudy-backup-${datePart}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `openstudy-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
 
-    setExportMessage(
-      'Backup gespeichert. Alle API-Keys und Tokens wurden vor dem Download automatisch entfernt.'
-    );
+    setExportMessage('Backup gespeichert. Alle API-Keys wurden vor dem Download automatisch entfernt.');
   };
-
-  const openaiBlockedByFreeLock =
-    provider.freeOnlyLock &&
-    !isLocalhostUrl(provider.customEndpoint) &&
-    !provider.customModel.trim().toLowerCase().endsWith(':free');
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
-      style={{
-        backgroundColor: 'rgba(20, 18, 15, 0.56)',
-        backdropFilter: 'blur(4px)',
-      }}
+      style={{ backgroundColor: 'rgba(18, 22, 20, 0.48)', backdropFilter: 'blur(4px)' }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -304,795 +346,643 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       aria-labelledby="settings-modal-title"
     >
       <div
-        className="surface-card animate-enter flex w-full max-w-[820px] flex-col overflow-hidden"
+        className="surface-card animate-enter flex w-full max-w-[680px] flex-col overflow-hidden"
         style={{
-          maxHeight: 'min(90vh, 860px)',
+          maxHeight: 'min(88vh, 800px)',
           borderColor: 'var(--border-strong)',
           boxShadow: 'var(--shadow-md)',
         }}
       >
         {/* Header */}
-        <div
-          className="flex items-center justify-between gap-4 px-6 py-4"
-          style={{
-            borderBottom: '1px solid var(--border-hairline)',
-            backgroundColor: 'var(--bg-raised)',
-          }}
-        >
-          <div className="flex items-center gap-2.5">
-            <span
-              className="flex h-8 w-8 items-center justify-center rounded-lg"
-              style={{
-                backgroundColor: 'var(--accent-soft)',
-                border: '1px solid var(--accent-border)',
-                color: 'var(--accent)',
-              }}
-            >
-              <Settings2 size={16} strokeWidth={1.5} />
-            </span>
-            <div>
-              <h2
-                id="settings-modal-title"
-                className="text-[15.5px] font-semibold leading-tight"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                Einstellungen
-              </h2>
-              <p className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
-                KI-Anbieter, 0-CHF-Schutz und lokale Datensicherung
-              </p>
-            </div>
-          </div>
-
+        <div className="flex items-start justify-between gap-4 px-7 pb-3 pt-6">
+          <h2
+            id="settings-modal-title"
+            className="font-display text-[26px] font-normal leading-tight"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            Einstellungen
+          </h2>
           <button
             type="button"
-            className="btn-ghost"
             onClick={onClose}
-            aria-label="Einstellungen schließen"
+            aria-label="Einstellungen schliessen"
+            className="btn-ghost -mr-2 -mt-1 h-8 w-8 p-0"
           >
             <X size={16} strokeWidth={1.5} />
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* Hairline underline tabs */}
         <div
-          className="flex items-center gap-2 px-6 py-2.5"
+          className="flex items-center gap-6 px-7"
           style={{ borderBottom: '1px solid var(--border-hairline)' }}
           role="tablist"
         >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'providers'}
-            onClick={() => setTab('providers')}
-            className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13.5px] font-medium transition-colors"
-            style={{
-              backgroundColor: tab === 'providers' ? 'var(--accent-soft)' : 'transparent',
-              border: `1px solid ${
-                tab === 'providers' ? 'var(--accent-border)' : 'transparent'
-              }`,
-              color: tab === 'providers' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer',
-            }}
-          >
-            <SlidersHorizontal size={15} strokeWidth={1.5} />
-            <span>KI-Anbieter (Multi-Provider)</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'privacy'}
-            onClick={() => setTab('privacy')}
-            className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13.5px] font-medium transition-colors"
-            style={{
-              backgroundColor: tab === 'privacy' ? 'var(--accent-soft)' : 'transparent',
-              border: `1px solid ${
-                tab === 'privacy' ? 'var(--accent-border)' : 'transparent'
-              }`,
-              color: tab === 'privacy' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer',
-            }}
-          >
-            <ShieldCheck size={15} strokeWidth={1.5} />
-            <span>Privatsphäre &amp; Daten</span>
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {tab === 'providers' && (
-            <div className="space-y-5">
-              {/* Prominent Free-Only Safety Switch */}
-              <div
-                className="flex flex-col justify-between gap-4 rounded-[12px] p-4 sm:flex-row sm:items-center"
+          {(
+            [
+              { id: 'appearance', label: 'Erscheinungsbild' },
+              { id: 'ai', label: 'KI & Sprache' },
+              { id: 'data', label: 'Daten & App' },
+            ] as const
+          ).map((item) => {
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(item.id)}
+                className={`-mb-px pb-3 pt-1 text-[13.5px] font-medium transition-colors ${
+                  active
+                    ? 'text-[var(--text-primary)]'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+                }`}
                 style={{
-                  backgroundColor: provider.freeOnlyLock
-                    ? 'var(--positive-soft)'
-                    : 'var(--warning-soft)',
-                  border: `1px solid ${
-                    provider.freeOnlyLock ? 'var(--accent-border)' : 'var(--border-strong)'
-                  }`,
+                  borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                  background: 'transparent',
+                  borderTop: 'none',
+                  borderLeft: 'none',
+                  borderRight: 'none',
+                  cursor: 'pointer',
                 }}
               >
-                <div className="flex items-start gap-3">
-                  <span
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                    style={{
-                      backgroundColor: 'var(--bg-card)',
-                      color: provider.freeOnlyLock ? 'var(--positive)' : 'var(--warning)',
-                    }}
-                  >
-                    {provider.freeOnlyLock ? (
-                      <Lock size={16} strokeWidth={1.5} />
-                    ) : (
-                      <Unlock size={16} strokeWidth={1.5} />
-                    )}
-                  </span>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className="text-[14.5px] font-semibold"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        Nur kostenlose Modelle verwenden
-                      </span>
-                      <span
-                        className="font-mono-num rounded-md px-2 py-0.5 text-[11.5px] font-medium"
-                        style={{
-                          backgroundColor: 'var(--bg-card)',
-                          color: provider.freeOnlyLock
-                            ? 'var(--positive)'
-                            : 'var(--warning)',
-                        }}
-                      >
-                        {provider.freeOnlyLock ? '0 CHF Schutz aktiv' : 'Alle Anbieter offen'}
-                      </span>
-                    </div>
-                    <p
-                      className="mt-1 text-[13px] leading-relaxed"
-                      style={{ color: 'var(--text-secondary)' }}
-                    >
-                      {provider.freeOnlyLock
-                        ? 'Blockiert kostenpflichtige Cloud-APIs automatisch. Erlaubt sind Google Gemini Free Tier, lokales Ollama, deine lokale CLI-Bridge sowie ":free"-Modelle.'
-                        : 'Schutzschalter ist aus. Kostenpflichtige BYOK-Endpunkte wie Anthropic oder bezahlte OpenRouter-Modelle können direkt genutzt werden.'}
-                    </p>
-                  </div>
-                </div>
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
 
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={provider.freeOnlyLock}
-                  aria-label="Nur kostenlose Modelle verwenden"
-                  onClick={() =>
-                    onUpdateProvider({ freeOnlyLock: !provider.freeOnlyLock })
-                  }
-                  className="relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors"
-                  style={{
-                    backgroundColor: provider.freeOnlyLock
-                      ? 'var(--accent)'
-                      : 'var(--border-strong)',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '3px',
-                  }}
-                >
-                  <span
-                    className="block h-5 w-5 rounded-full transition-transform"
-                    style={{
-                      backgroundColor: 'var(--bg-card)',
-                      transform: provider.freeOnlyLock
-                        ? 'translateX(20px)'
-                        : 'translateX(0px)',
-                    }}
-                  />
-                </button>
-              </div>
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto px-7 py-6">
+          {tab === 'appearance' && (
+            <div className="space-y-7">
+              <section>
+                <h3 className="text-[14.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                  Farbschema
+                </h3>
+                <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                  Wähle die Papier- oder Nachtpalette für dein Lernstudio.
+                </p>
 
-              {/* Active Provider Selector */}
-              <div className="space-y-2.5">
-                <span
-                  className="block text-[13.5px] font-medium"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  Aktiver Text-Anbieter
-                </span>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {PROVIDER_OPTIONS.map((opt) => {
-                    const selected = provider.activeTextProvider === opt.id;
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {COLOR_SCHEMES.map((scheme) => {
+                    const active = state.colorScheme === scheme.id;
+                    const [canvas, primary, warmAccent] = scheme.swatches;
                     return (
                       <button
-                        key={opt.id}
+                        key={scheme.id}
                         type="button"
-                        onClick={() => onUpdateProvider({ activeTextProvider: opt.id })}
-                        className="rounded-[10px] p-3 text-left transition-colors"
+                        onClick={() => onSetColorScheme(scheme.id)}
+                        aria-pressed={active}
+                        className={`rounded-[12px] p-3.5 text-left transition-colors ${
+                          active ? '' : 'bg-transparent hover:bg-[var(--bg-raised)]'
+                        }`}
                         style={{
-                          backgroundColor: selected
-                            ? 'var(--accent-soft)'
-                            : 'var(--bg-raised)',
-                          border: `1px solid ${
-                            selected ? 'var(--accent-border)' : 'var(--border-hairline)'
-                          }`,
+                          ...(active ? { backgroundColor: 'var(--accent-soft)' } : {}),
+                          border: active
+                            ? '1.5px solid var(--accent)'
+                            : '1px solid var(--border-hairline)',
                           cursor: 'pointer',
                         }}
                       >
-                        <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center justify-between gap-3">
                           <span
-                            className="text-[13.5px] font-semibold leading-snug"
-                            style={{
-                              color: selected ? 'var(--accent)' : 'var(--text-primary)',
-                            }}
+                            className="flex h-4 w-16 overflow-hidden rounded-full"
+                            style={{ border: '1px solid var(--border-strong)' }}
+                            aria-hidden="true"
                           >
-                            {opt.title}
+                            <span className="h-full w-1/2" style={{ backgroundColor: canvas }} />
+                            <span className="h-full w-[30%]" style={{ backgroundColor: primary }} />
+                            <span className="h-full w-[20%]" style={{ backgroundColor: warmAccent }} />
                           </span>
-                          <span
-                            className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium"
-                            style={{
-                              backgroundColor: 'var(--bg-card)',
-                              color: 'var(--text-secondary)',
-                              border: '1px solid var(--border-hairline)',
-                            }}
-                          >
-                            {opt.costTag}
-                          </span>
+                          {active && <Check size={15} strokeWidth={1.75} style={{ color: 'var(--accent)' }} />}
+                        </div>
+
+                        <div
+                          className="mt-2.5 text-[14px] font-medium"
+                          style={{ color: 'var(--text-primary)' }}
+                        >
+                          {scheme.name}
                         </div>
                         <p
-                          className="mt-1 text-[12.5px]"
+                          className="mt-0.5 text-[12.5px] leading-snug"
                           style={{ color: 'var(--text-secondary)' }}
                         >
-                          {opt.subtitle}
+                          {scheme.tagline}
                         </p>
                       </button>
                     );
                   })}
                 </div>
-              </div>
+              </section>
 
-              {/* Provider-Specific Configuration Panel */}
-              <div className="surface-raised space-y-4 p-4">
-                {provider.activeTextProvider === 'gemini-free' && (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Sparkles size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                        <h3
-                          className="text-[14.5px] font-semibold"
-                          style={{ color: 'var(--text-primary)' }}
-                        >
-                          Google Gemini Free Tier Konfiguration
-                        </h3>
-                      </div>
-                      <a
-                        href="https://aistudio.google.com/apikey"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn-ghost text-[12.5px]"
-                        style={{ color: 'var(--accent)', textDecoration: 'none' }}
-                      >
-                        <KeyRound size={14} strokeWidth={1.5} />
-                        <span>Google AI Studio öffnen</span>
-                        <ExternalLink size={13} strokeWidth={1.5} />
-                      </a>
-                    </div>
+              <section className="pt-6" style={{ borderTop: '1px solid var(--border-hairline)' }}>
+                <h3 className="text-[14.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                  Tägliches Fokus-Ziel
+                </h3>
+                <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                  Dein ruhiges Richtmass für konzentrierte Lernzeit pro Tag.
+                </p>
 
-                    <div className="space-y-2">
-                      <label
-                        htmlFor="settings-gemini-key"
-                        className="block text-[12.5px] font-medium"
-                        style={{ color: 'var(--text-secondary)' }}
-                      >
-                        Google AI Studio API-Key (wird nur lokal im Browser gespeichert)
-                      </label>
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <div className="relative flex-1">
-                          <input
-                            id="settings-gemini-key"
-                            type={showGeminiKey ? 'text' : 'password'}
-                            value={provider.geminiApiKey}
-                            onChange={(e) => {
-                              setGeminiResult(null);
-                              onUpdateProvider({ geminiApiKey: e.target.value });
-                            }}
-                            placeholder="Google AI Studio API-Key einfügen"
-                            className="font-mono-num h-9 w-full rounded-lg pl-3 pr-9 text-[13px]"
-                            style={{
-                              backgroundColor: 'var(--bg-card)',
-                              border: '1px solid var(--border-strong)',
-                              color: 'var(--text-primary)',
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowGeminiKey((v) => !v)}
-                            aria-label={showGeminiKey ? 'Key verbergen' : 'Key anzeigen'}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1"
-                            style={{
-                              color: 'var(--text-muted)',
-                              background: 'transparent',
-                              border: 'none',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            {showGeminiKey ? (
-                              <EyeOff size={15} strokeWidth={1.5} />
-                            ) : (
-                              <Eye size={15} strokeWidth={1.5} />
-                            )}
-                          </button>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={handleTestGemini}
-                          disabled={testingGemini || !provider.geminiApiKey.trim()}
-                          className="btn-accent shrink-0"
-                          style={{
-                            opacity:
-                              testingGemini || !provider.geminiApiKey.trim() ? 0.55 : 1,
-                          }}
-                        >
-                          {testingGemini ? (
-                            <Loader2 size={15} strokeWidth={1.5} className="animate-spin" />
-                          ) : (
-                            <CheckCircle2 size={15} strokeWidth={1.5} />
-                          )}
-                          <span>Key testen</span>
-                        </button>
-                      </div>
-
-                      {geminiResult && (
-                        <div
-                          className="flex items-start gap-2 rounded-lg px-3 py-2 text-[13px]"
-                          style={{
-                            backgroundColor: geminiResult.ok
-                              ? 'var(--positive-soft)'
-                              : 'var(--negative-soft)',
-                            color: geminiResult.ok ? 'var(--positive)' : 'var(--negative)',
-                          }}
-                        >
-                          {geminiResult.ok ? (
-                            <CheckCircle2 size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                          ) : (
-                            <AlertCircle size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                          )}
-                          <span>{geminiResult.message}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Text-Modell (Free Tier)
-                        </span>
-                        <select
-                          value={
-                            (FREE_GEMINI_TEXT_MODELS as readonly string[]).includes(
-                              provider.geminiTextModel
-                            )
-                              ? provider.geminiTextModel
-                              : FREE_GEMINI_TEXT_MODELS[0]
-                          }
-                          onChange={(e) =>
-                            onUpdateProvider({ geminiTextModel: e.target.value })
-                          }
-                          className="font-mono-num h-9 w-full rounded-lg px-2.5 text-[13px]"
-                          style={{
-                            backgroundColor: 'var(--bg-card)',
-                            border: '1px solid var(--border-strong)',
-                            color: 'var(--text-primary)',
-                          }}
-                        >
-                          {FREE_GEMINI_TEXT_MODELS.map((model) => (
-                            <option key={model} value={model}>
-                              {model}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Voice-Live-Modell (Free Tier)
-                        </span>
-                        <select
-                          value={
-                            (FREE_LIVE_MODELS as readonly string[]).includes(
-                              provider.geminiLiveModel
-                            )
-                              ? provider.geminiLiveModel
-                              : FREE_LIVE_MODELS[0]
-                          }
-                          onChange={(e) =>
-                            onUpdateProvider({ geminiLiveModel: e.target.value })
-                          }
-                          className="font-mono-num h-9 w-full rounded-lg px-2.5 text-[13px]"
-                          style={{
-                            backgroundColor: 'var(--bg-card)',
-                            border: '1px solid var(--border-strong)',
-                            color: 'var(--text-primary)',
-                          }}
-                        >
-                          {FREE_LIVE_MODELS.map((model) => (
-                            <option key={model} value={model}>
-                              {model}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  </>
-                )}
-
-                {provider.activeTextProvider === 'ollama' && (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Cpu size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                        <h3
-                          className="text-[14.5px] font-semibold"
-                          style={{ color: 'var(--text-primary)' }}
-                        >
-                          Ollama lokal verbinden (100 % offline)
-                        </h3>
-                      </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {DAILY_GOALS.map((minutes) => {
+                    const active = state.dailyGoalMinutes === minutes;
+                    return (
                       <button
+                        key={minutes}
                         type="button"
-                        onClick={handleCheckOllama}
-                        disabled={checkingOllama}
-                        className="btn-secondary h-8 px-3 text-[12.5px]"
-                      >
-                        <RefreshCw
-                          size={13}
-                          strokeWidth={1.5}
-                          className={checkingOllama ? 'animate-spin' : ''}
-                        />
-                        <span>Status prüfen</span>
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Ollama Server-URL
-                        </span>
-                        <input
-                          type="text"
-                          value={provider.ollamaUrl}
-                          onChange={(e) => onUpdateProvider({ ollamaUrl: e.target.value })}
-                          placeholder="http://127.0.0.1:11434"
-                          className="font-mono-num h-9 w-full rounded-lg px-3 text-[13px]"
-                          style={{
-                            backgroundColor: 'var(--bg-card)',
-                            border: '1px solid var(--border-strong)',
-                            color: 'var(--text-primary)',
-                          }}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Lokales Modell
-                        </span>
-                        <input
-                          type="text"
-                          value={provider.ollamaModel}
-                          onChange={(e) => onUpdateProvider({ ollamaModel: e.target.value })}
-                          placeholder="gemma3:4b"
-                          className="font-mono-num h-9 w-full rounded-lg px-3 text-[13px]"
-                          style={{
-                            backgroundColor: 'var(--bg-card)',
-                            border: '1px solid var(--border-strong)',
-                            color: 'var(--text-primary)',
-                          }}
-                        />
-                      </label>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
-                      <span style={{ color: 'var(--text-muted)' }}>Schnellwahl:</span>
-                      {['gemma3:4b', 'llama3.2:3b', 'qwen2.5:7b'].map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          onClick={() => onUpdateProvider({ ollamaModel: m })}
-                          className="font-mono-num rounded-md px-2 py-0.5"
-                          style={{
-                            backgroundColor:
-                              provider.ollamaModel === m
-                                ? 'var(--accent-soft)'
-                                : 'var(--bg-card)',
-                            border: `1px solid ${
-                              provider.ollamaModel === m
-                                ? 'var(--accent-border)'
-                                : 'var(--border-hairline)'
-                            }`,
-                            color:
-                              provider.ollamaModel === m
-                                ? 'var(--accent)'
-                                : 'var(--text-secondary)',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          {m}
-                        </button>
-                      ))}
-                    </div>
-
-                    {ollamaResult && (
-                      <div
-                        className="rounded-lg px-3 py-2.5 text-[13px]"
+                        onClick={() => onSetDailyGoalMinutes(minutes)}
+                        aria-pressed={active}
+                        className="font-mono-num h-9 rounded-full px-4 text-[13px] font-medium transition-colors"
                         style={{
-                          backgroundColor: ollamaResult.ok
-                            ? 'var(--positive-soft)'
-                            : 'var(--negative-soft)',
-                          color: ollamaResult.ok ? 'var(--positive)' : 'var(--negative)',
+                          backgroundColor: active ? 'var(--accent)' : 'transparent',
+                          color: active ? 'var(--accent-ink)' : 'var(--text-primary)',
+                          border: active
+                            ? '1px solid var(--accent)'
+                            : '1px solid var(--border-strong)',
+                          cursor: 'pointer',
                         }}
                       >
-                        <div className="flex items-start gap-2">
-                          {ollamaResult.ok ? (
-                            <CheckCircle2 size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                          ) : (
-                            <AlertCircle size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                          )}
-                          <span>{ollamaResult.message}</span>
-                        </div>
-                        {ollamaResult.models.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {ollamaResult.models.slice(0, 8).map((name) => (
-                              <button
-                                key={name}
-                                type="button"
-                                onClick={() => onUpdateProvider({ ollamaModel: name })}
-                                className="font-mono-num rounded px-2 py-0.5 text-[11.5px]"
-                                style={{
-                                  backgroundColor: 'var(--bg-card)',
-                                  color: 'var(--text-primary)',
-                                  border: '1px solid var(--border-hairline)',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                {name}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {provider.activeTextProvider === 'cli-bridge' && (
-                  <>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Terminal size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                        <h3
-                          className="text-[14.5px] font-semibold"
-                          style={{ color: 'var(--text-primary)' }}
-                        >
-                          Lokale Agent-Bridge (Antigravity, Claude Code &amp; Codex)
-                        </h3>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleCheckBridge}
-                        disabled={checkingBridge}
-                        className="btn-accent h-8 px-3 text-[12.5px]"
-                      >
-                        <RefreshCw
-                          size={13}
-                          strokeWidth={1.5}
-                          className={checkingBridge ? 'animate-spin' : ''}
-                        />
-                        <span>Bridge-Status prüfen</span>
+                        {minutes} Min
                       </button>
-                    </div>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+          )}
 
-                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                      {BRIDGE_TOOLS.map((tool) => {
-                        const selected = provider.bridgeTool === tool.id;
+          {tab === 'ai' && (
+            <div className="space-y-6">
+              <section className="space-y-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <div>
+                    <h3 className="text-[14.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                      Standard: Google Gemini (Kostenlos)
+                    </h3>
+                    <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                      Aktiviert den Live-Sprachtutor und KI-Erklärungen direkt im Browser.
+                    </p>
+                  </div>
+                  <a
+                    href="https://aistudio.google.com/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[13px] underline underline-offset-4 transition-opacity hover:opacity-80"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    <span>Google AI Studio</span>
+                    <ExternalLink size={12} strokeWidth={1.5} />
+                  </a>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="settings-gemini-key"
+                    className="mb-1.5 block text-[12.5px] font-medium"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    Google AI Studio API-Key
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <SecretInput
+                      id="settings-gemini-key"
+                      value={provider.geminiApiKey}
+                      onChange={(value) => {
+                        setGeminiResult(null);
+                        onUpdateProvider({ geminiApiKey: value });
+                      }}
+                      onEnter={() => void handleTestGemini()}
+                      placeholder="API-Key einfügen"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleTestGemini()}
+                      disabled={testingGemini || !provider.geminiApiKey.trim()}
+                      className="btn-accent shrink-0"
+                      style={{ opacity: testingGemini || !provider.geminiApiKey.trim() ? 0.5 : 1 }}
+                    >
+                      {testingGemini && <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />}
+                      <span>Prüfen</span>
+                    </button>
+                  </div>
+
+                  {geminiResult && (
+                    <div className="mt-2">
+                      <StatusLine
+                        tone={geminiResult.ok ? 'positive' : 'negative'}
+                        message={geminiResult.message}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* Quiet hairline Free-Only toggle */}
+                <div
+                  className="flex items-center justify-between gap-4 py-3.5"
+                  style={{
+                    borderTop: '1px solid var(--border-hairline)',
+                    borderBottom: '1px solid var(--border-hairline)',
+                  }}
+                >
+                  <div>
+                    <div className="text-[13.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                      Nur kostenlose Modelle verwenden
+                    </div>
+                    <p className="mt-0.5 text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
+                      Blockiert kostenpflichtige Cloud-APIs automatisch.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={provider.freeOnlyLock}
+                    aria-label="Nur kostenlose Modelle verwenden"
+                    onClick={() => onUpdateProvider({ freeOnlyLock: !provider.freeOnlyLock })}
+                    className="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors"
+                    style={{
+                      backgroundColor: provider.freeOnlyLock
+                        ? 'var(--accent)'
+                        : 'var(--border-strong)',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '2px',
+                    }}
+                  >
+                    <span
+                      className="block h-5 w-5 rounded-full transition-transform"
+                      style={{
+                        backgroundColor: 'var(--bg-card)',
+                        transform: provider.freeOnlyLock ? 'translateX(20px)' : 'translateX(0px)',
+                      }}
+                    />
+                  </button>
+                </div>
+
+                {/* Model dropdowns */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span
+                      className="mb-1.5 block text-[12.5px] font-medium"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      Text-Modell
+                    </span>
+                    <select
+                      value={
+                        (FREE_GEMINI_TEXT_MODELS as readonly string[]).includes(provider.geminiTextModel)
+                          ? provider.geminiTextModel
+                          : FREE_GEMINI_TEXT_MODELS[0]
+                      }
+                      onChange={(e) => onUpdateProvider({ geminiTextModel: e.target.value })}
+                      className="font-mono-num h-9 w-full rounded-[10px] px-2.5 text-[13px]"
+                      style={FIELD_STYLE}
+                    >
+                      {FREE_GEMINI_TEXT_MODELS.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block">
+                    <span
+                      className="mb-1.5 block text-[12.5px] font-medium"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      Live-Sprachmodell
+                    </span>
+                    <select
+                      value={
+                        (FREE_LIVE_MODELS as readonly string[]).includes(provider.geminiLiveModel)
+                          ? provider.geminiLiveModel
+                          : FREE_LIVE_MODELS[0]
+                      }
+                      onChange={(e) => onUpdateProvider({ geminiLiveModel: e.target.value })}
+                      className="font-mono-num h-9 w-full rounded-[10px] px-2.5 text-[13px]"
+                      style={FIELD_STYLE}
+                    >
+                      {FREE_LIVE_MODELS.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </section>
+
+              {/* Collapsed Advanced Section */}
+              <details
+                open={advancedOpen}
+                className="pt-5"
+                style={{ borderTop: '1px solid var(--border-hairline)' }}
+              >
+                <summary
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setAdvancedOpen((prev) => !prev);
+                  }}
+                  className="flex cursor-pointer list-none items-center gap-2 text-[13.5px] font-medium select-none [&::-webkit-details-marker]:hidden"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  <ChevronRight
+                    size={15}
+                    strokeWidth={1.5}
+                    className="shrink-0 transition-transform"
+                    style={{
+                      color: 'var(--text-muted)',
+                      transform: advancedOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                    }}
+                  />
+                  <span>Für Fortgeschrittene — Lokale Modelle, Bridge &amp; eigene API-Keys</span>
+                </summary>
+
+                <div className="mt-5 space-y-5 pl-5">
+                  <div>
+                    <div
+                      className="mb-2 text-[12.5px] font-medium"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      Aktiver Text-Anbieter
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {ADVANCED_PROVIDERS.map((opt) => {
+                        const selected = provider.activeTextProvider === opt.id;
                         return (
                           <button
-                            key={tool.id}
+                            key={opt.id}
                             type="button"
-                            onClick={() => onUpdateProvider({ bridgeTool: tool.id })}
-                            className="rounded-lg p-3 text-left transition-colors"
+                            onClick={() => onUpdateProvider({ activeTextProvider: opt.id })}
+                            aria-pressed={selected}
+                            className="h-8 rounded-full px-3 text-[12.5px] font-medium transition-colors"
                             style={{
-                              backgroundColor: selected
-                                ? 'var(--accent-soft)'
-                                : 'var(--bg-card)',
-                              border: `1px solid ${
-                                selected ? 'var(--accent-border)' : 'var(--border-hairline)'
-                              }`,
+                              backgroundColor: selected ? 'var(--accent-soft)' : 'transparent',
+                              border: selected
+                                ? '1px solid var(--accent-border)'
+                                : '1px solid var(--border-hairline)',
+                              color: selected ? 'var(--accent)' : 'var(--text-secondary)',
                               cursor: 'pointer',
                             }}
                           >
-                            <div className="flex items-center justify-between gap-1">
-                              <span
-                                className="text-[13.5px] font-semibold"
-                                style={{
-                                  color: selected ? 'var(--accent)' : 'var(--text-primary)',
-                                }}
-                              >
-                                {tool.label}
-                              </span>
-                              <code
-                                className="font-mono-num rounded px-1.5 py-0.5 text-[11px]"
-                                style={{
-                                  backgroundColor: 'var(--bg-raised)',
-                                  color: 'var(--text-secondary)',
-                                }}
-                              >
-                                {tool.cliCommand}
-                              </code>
-                            </div>
-                            <p
-                              className="mt-1 text-[12px]"
-                              style={{ color: 'var(--text-secondary)' }}
-                            >
-                              {tool.note}
-                            </p>
+                            {opt.label}
                           </button>
                         );
                       })}
                     </div>
+                  </div>
 
-                    <label className="block">
-                      <span
-                        className="mb-1 block text-[12.5px] font-medium"
-                        style={{ color: 'var(--text-secondary)' }}
-                      >
-                        Lokale Bridge-Adresse (standardmäßig nur auf 127.0.0.1 erreichbar)
-                      </span>
-                      <input
-                        type="text"
-                        value={provider.bridgeUrl}
-                        onChange={(e) => onUpdateProvider({ bridgeUrl: e.target.value })}
-                        placeholder="http://127.0.0.1:4319"
-                        className="font-mono-num h-9 w-full rounded-lg px-3 text-[13px]"
-                        style={{
-                          backgroundColor: 'var(--bg-card)',
-                          border: '1px solid var(--border-strong)',
-                          color: 'var(--text-primary)',
-                        }}
-                      />
-                    </label>
+                  {provider.activeTextProvider === 'gemini-free' && (
+                    <p className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                      Google Gemini ist aktiv und wird über die Felder oben verwaltet.
+                    </p>
+                  )}
 
-                    {bridgeResult && (
-                      <div
-                        className="flex items-start gap-2 rounded-lg px-3 py-2.5 text-[13px]"
-                        style={{
-                          backgroundColor: bridgeResult.online
-                            ? 'var(--positive-soft)'
-                            : 'var(--warning-soft)',
-                          color: bridgeResult.online ? 'var(--positive)' : 'var(--warning)',
-                        }}
-                      >
-                        {bridgeResult.online ? (
-                          <CheckCircle2 size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                        ) : (
-                          <AlertCircle size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                        )}
-                        <div>
-                          <div className="font-medium">
-                            {bridgeResult.online
-                              ? 'Lokale Bridge ist online und einsatzbereit.'
-                              : 'Lokale Bridge antwortet derzeit nicht.'}
-                          </div>
-                          {bridgeResult.online && bridgeResult.tools.length > 0 && (
-                            <div className="mt-0.5 text-[12.5px]">
-                              Erkannte lokale Werkzeuge:{' '}
-                              <span className="font-mono-num">
-                                {bridgeResult.tools.join(', ')}
-                              </span>
+                  {provider.activeTextProvider === 'ollama' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            Ollama URL
+                          </span>
+                          <input
+                            type="text"
+                            value={provider.ollamaUrl}
+                            onChange={(e) => onUpdateProvider({ ollamaUrl: e.target.value })}
+                            placeholder="http://127.0.0.1:11434"
+                            className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                            style={FIELD_STYLE}
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            Lokales Modell
+                          </span>
+                          <input
+                            type="text"
+                            value={provider.ollamaModel}
+                            onChange={(e) => onUpdateProvider({ ollamaModel: e.target.value })}
+                            placeholder="gemma3:4b"
+                            className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                            style={FIELD_STYLE}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                          <span style={{ color: 'var(--text-muted)' }}>Vorschläge:</span>
+                          {['gemma3:4b', 'llama3.2:3b', 'qwen2.5:7b'].map((model) => (
+                            <button
+                              key={model}
+                              type="button"
+                              onClick={() => onUpdateProvider({ ollamaModel: model })}
+                              className="font-mono-num rounded-full px-2.5 py-0.5 text-[12px]"
+                              style={{
+                                backgroundColor:
+                                  provider.ollamaModel === model ? 'var(--accent-soft)' : 'transparent',
+                                border:
+                                  provider.ollamaModel === model
+                                    ? '1px solid var(--accent-border)'
+                                    : '1px solid var(--border-hairline)',
+                                color:
+                                  provider.ollamaModel === model
+                                    ? 'var(--accent)'
+                                    : 'var(--text-secondary)',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {model}
+                            </button>
+                          ))}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void handleCheckOllama()}
+                          disabled={checkingOllama}
+                          className="btn-secondary h-8 px-3 text-[12.5px]"
+                        >
+                          {checkingOllama && (
+                            <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
+                          )}
+                          <span>Verbindung prüfen</span>
+                        </button>
+                      </div>
+
+                      {ollamaResult && (
+                        <div className="space-y-2">
+                          <StatusLine
+                            tone={ollamaResult.ok ? 'positive' : 'negative'}
+                            message={ollamaResult.message}
+                          />
+                          {ollamaResult.models.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {ollamaResult.models.slice(0, 8).map((name) => (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  onClick={() => onUpdateProvider({ ollamaModel: name })}
+                                  className="font-mono-num rounded-full px-2.5 py-0.5 text-[11.5px]"
+                                  style={{
+                                    backgroundColor: 'transparent',
+                                    border: '1px solid var(--border-hairline)',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  {name}
+                                </button>
+                              ))}
                             </div>
                           )}
                         </div>
-                      </div>
-                    )}
-
-                    {/* Explicit setup instructions */}
-                    <div
-                      className="rounded-lg p-3.5 text-[13px]"
-                      style={{
-                        backgroundColor: 'var(--bg-card)',
-                        border: '1px solid var(--border-hairline)',
-                      }}
-                    >
-                      <div
-                        className="mb-1.5 font-semibold"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        So verbindest du Antigravity, Claude Code oder Codex sicher lokal
-                      </div>
-                      <ol
-                        className="m-0 list-decimal space-y-1 pl-4 text-[12.5px] leading-relaxed"
-                        style={{ color: 'var(--text-secondary)' }}
-                      >
-                        <li>
-                          Stelle sicher, dass dein gewünschtes CLI lokal installiert und
-                          angemeldet ist (<code className="font-mono-num">agy</code>,{' '}
-                          <code className="font-mono-num">claude</code> oder{' '}
-                          <code className="font-mono-num">codex</code>).
-                        </li>
-                        <li>
-                          Starte im OpenStudy-Ordner den Befehl{' '}
-                          <code className="font-mono-num rounded bg-[var(--bg-raised)] px-1.5 py-0.5">
-                            npm run bridge
-                          </code>{' '}
-                          (bei Nutzung des Desktop-Installers startet die lokale Bridge automatisch
-                          mit).
-                        </li>
-                        <li>
-                          Klicke oben auf «Bridge-Status prüfen». Die Bridge hört ausschließlich
-                          auf <code className="font-mono-num">127.0.0.1</code> — deine lokalen
-                          Logins verlassen deinen PC niemals.
-                        </li>
-                      </ol>
+                      )}
                     </div>
-                  </>
-                )}
+                  )}
 
-                {provider.activeTextProvider === 'openai-compatible' && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <SlidersHorizontal
-                        size={16}
-                        strokeWidth={1.5}
-                        style={{ color: 'var(--accent)' }}
-                      />
-                      <h3
-                        className="text-[14.5px] font-semibold"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        OpenAI-kompatibler Endpunkt / OpenRouter
-                      </h3>
-                    </div>
-
-                    {openaiBlockedByFreeLock && (
-                      <div
-                        className="flex flex-col justify-between gap-2 rounded-lg px-3 py-2.5 text-[13px] sm:flex-row sm:items-center"
-                        style={{
-                          backgroundColor: 'var(--warning-soft)',
-                          color: 'var(--warning)',
-                        }}
-                      >
-                        <div className="flex items-start gap-2">
-                          <AlertCircle size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                          <span>
-                            Der Free-Only-Schutz erlaubt externe Endpunkte nur mit{' '}
-                            <code className="font-mono-num">:free</code>-Modellen oder über
-                            localhost.
-                          </span>
+                  {provider.activeTextProvider === 'cli-bridge' && (
+                    <div className="space-y-4">
+                      <div>
+                        <div
+                          className="mb-2 text-[12.5px] font-medium"
+                          style={{ color: 'var(--text-secondary)' }}
+                        >
+                          Lokales CLI-Werkzeug
                         </div>
+                        <div className="flex flex-wrap gap-2">
+                          {BRIDGE_TOOLS.map((tool) => {
+                            const selected = provider.bridgeTool === tool.id;
+                            return (
+                              <button
+                                key={tool.id}
+                                type="button"
+                                onClick={() => onUpdateProvider({ bridgeTool: tool.id })}
+                                aria-pressed={selected}
+                                className="inline-flex h-8 items-center gap-2 rounded-full px-3 text-[12.5px] font-medium transition-colors"
+                                style={{
+                                  backgroundColor: selected ? 'var(--accent-soft)' : 'transparent',
+                                  border: selected
+                                    ? '1px solid var(--accent-border)'
+                                    : '1px solid var(--border-hairline)',
+                                  color: selected ? 'var(--accent)' : 'var(--text-primary)',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <span>{tool.label}</span>
+                                <code
+                                  className="font-mono-num text-[11.5px]"
+                                  style={{ color: 'var(--text-muted)' }}
+                                >
+                                  {tool.cli}
+                                </code>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <label className="block">
+                        <span
+                          className="mb-1.5 block text-[12.5px] font-medium"
+                          style={{ color: 'var(--text-secondary)' }}
+                        >
+                          Bridge-Adresse (nur lokal auf 127.0.0.1)
+                        </span>
+                        <input
+                          type="text"
+                          value={provider.bridgeUrl}
+                          onChange={(e) => onUpdateProvider({ bridgeUrl: e.target.value })}
+                          placeholder="http://127.0.0.1:4319"
+                          className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                          style={FIELD_STYLE}
+                        />
+                      </label>
+
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => onUpdateProvider({ freeOnlyLock: false })}
-                          className="btn-secondary h-8 shrink-0 px-2.5 text-[12px]"
+                          onClick={() => void handleCopyBridgeCommand()}
+                          className="btn-secondary h-8 px-3 text-[12.5px]"
                         >
-                          Schutz aufheben
+                          {copiedBridgeCmd ? (
+                            <Check size={13} strokeWidth={1.75} />
+                          ) : (
+                            <Copy size={13} strokeWidth={1.5} />
+                          )}
+                          <span className="font-mono-num">npm run bridge</span>
+                          <span>{copiedBridgeCmd ? 'kopiert' : 'kopieren'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => void handleCheckBridge()}
+                          disabled={checkingBridge}
+                          className="btn-secondary h-8 px-3 text-[12.5px]"
+                        >
+                          {checkingBridge && (
+                            <Loader2 size={13} strokeWidth={1.5} className="animate-spin" />
+                          )}
+                          <span>Bridge prüfen</span>
                         </button>
                       </div>
-                    )}
 
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="block sm:col-span-2">
+                      {bridgeResult && (
+                        <StatusLine
+                          tone={bridgeResult.online ? 'positive' : 'warning'}
+                          message={
+                            bridgeResult.online
+                              ? bridgeResult.tools.length > 0
+                                ? `Bridge online (${bridgeResult.tools.join(', ')}).`
+                                : 'Bridge online.'
+                              : 'Bridge antwortet nicht. Starte den Befehl oben im Projektordner.'
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {provider.activeTextProvider === 'openai-compatible' && (
+                    <div className="space-y-4">
+                      {openaiBlockedByFreeLock && (
+                        <p
+                          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]"
+                          style={{ color: 'var(--warning)' }}
+                        >
+                          <span>
+                            Im Kostenlos-Modus sind nur localhost oder Modelle mit{' '}
+                            <code className="font-mono-num">:free</code> erlaubt.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateProvider({ freeOnlyLock: false })}
+                            className="underline underline-offset-4"
+                            style={{
+                              color: 'var(--text-primary)',
+                              background: 'transparent',
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Sperre aufheben
+                          </button>
+                        </p>
+                      )}
+
+                      <label className="block">
                         <span
-                          className="mb-1 block text-[12.5px] font-medium"
+                          className="mb-1.5 block text-[12.5px] font-medium"
                           style={{ color: 'var(--text-secondary)' }}
                         >
                           Chat-Completions Endpunkt URL
@@ -1100,414 +990,229 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <input
                           type="text"
                           value={provider.customEndpoint}
-                          onChange={(e) =>
-                            onUpdateProvider({ customEndpoint: e.target.value })
-                          }
+                          onChange={(e) => onUpdateProvider({ customEndpoint: e.target.value })}
                           placeholder="https://openrouter.ai/api/v1/chat/completions"
-                          className="font-mono-num h-9 w-full rounded-lg px-3 text-[13px]"
-                          style={{
-                            backgroundColor: 'var(--bg-card)',
-                            border: '1px solid var(--border-strong)',
-                            color: 'var(--text-primary)',
-                          }}
+                          className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                          style={FIELD_STYLE}
                         />
                       </label>
 
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Modell-ID
-                        </span>
-                        <input
-                          type="text"
-                          value={provider.customModel}
-                          onChange={(e) => onUpdateProvider({ customModel: e.target.value })}
-                          placeholder="google/gemma-3-27b-it:free"
-                          className="font-mono-num h-9 w-full rounded-lg px-3 text-[13px]"
-                          style={{
-                            backgroundColor: 'var(--bg-card)',
-                            border: '1px solid var(--border-strong)',
-                            color: 'var(--text-primary)',
-                          }}
-                        />
-                      </label>
-
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          API-Key (optional für localhost)
-                        </span>
-                        <div className="relative">
-                          <input
-                            type={showCustomKey ? 'text' : 'password'}
-                            value={provider.customApiKey}
-                            onChange={(e) =>
-                              onUpdateProvider({ customApiKey: e.target.value })
-                            }
-                            placeholder="API-Key einfügen"
-                            className="font-mono-num h-9 w-full rounded-lg pl-3 pr-9 text-[13px]"
-                            style={{
-                              backgroundColor: 'var(--bg-card)',
-                              border: '1px solid var(--border-strong)',
-                              color: 'var(--text-primary)',
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowCustomKey((v) => !v)}
-                            aria-label={showCustomKey ? 'Key verbergen' : 'Key anzeigen'}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1"
-                            style={{
-                              color: 'var(--text-muted)',
-                              background: 'transparent',
-                              border: 'none',
-                              cursor: 'pointer',
-                            }}
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
                           >
-                            {showCustomKey ? (
-                              <EyeOff size={15} strokeWidth={1.5} />
-                            ) : (
-                              <Eye size={15} strokeWidth={1.5} />
-                            )}
-                          </button>
-                        </div>
-                      </label>
-                    </div>
-                  </>
-                )}
-
-                {provider.activeTextProvider === 'anthropic' && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <KeyRound size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                      <h3
-                        className="text-[14.5px] font-semibold"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        Anthropic Claude (Direkte API)
-                      </h3>
-                    </div>
-
-                    {provider.freeOnlyLock && (
-                      <div
-                        className="flex flex-col justify-between gap-2 rounded-lg px-3 py-2.5 text-[13px] sm:flex-row sm:items-center"
-                        style={{
-                          backgroundColor: 'var(--warning-soft)',
-                          color: 'var(--warning)',
-                        }}
-                      >
-                        <div className="flex items-start gap-2">
-                          <Lock size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" />
-                          <span>
-                            Der Free-Only-Schutz blockiert die kostenpflichtige Anthropic-API.
-                            Deaktiviere den Schutz oben oder nutze Claude Code über die lokale
-                            Agent-Bridge.
+                            Modell-ID
                           </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => onUpdateProvider({ freeOnlyLock: false })}
-                          className="btn-secondary h-8 shrink-0 px-2.5 text-[12px]"
-                        >
-                          Für BYOK freischalten
-                        </button>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Anthropic API-Key
-                        </span>
-                        <div className="relative">
                           <input
-                            type={showAnthropicKey ? 'text' : 'password'}
-                            value={provider.anthropicApiKey}
-                            onChange={(e) =>
-                              onUpdateProvider({ anthropicApiKey: e.target.value })
-                            }
-                            placeholder="Anthropic API-Key einfügen"
-                            className="font-mono-num h-9 w-full rounded-lg pl-3 pr-9 text-[13px]"
-                            style={{
-                              backgroundColor: 'var(--bg-card)',
-                              border: '1px solid var(--border-strong)',
-                              color: 'var(--text-primary)',
-                            }}
+                            type="text"
+                            value={provider.customModel}
+                            onChange={(e) => onUpdateProvider({ customModel: e.target.value })}
+                            placeholder="google/gemma-3-27b-it:free"
+                            className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                            style={FIELD_STYLE}
                           />
+                        </label>
+
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            API-Key (optional für localhost)
+                          </span>
+                          <SecretInput
+                            value={provider.customApiKey}
+                            onChange={(value) => onUpdateProvider({ customApiKey: value })}
+                            placeholder="API-Key einfügen"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {provider.activeTextProvider === 'anthropic' && (
+                    <div className="space-y-4">
+                      {provider.freeOnlyLock && (
+                        <p
+                          className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]"
+                          style={{ color: 'var(--warning)' }}
+                        >
+                          <span>
+                            Die direkte Anthropic-API ist kostenpflichtig und aktuell gesperrt.
+                          </span>
                           <button
                             type="button"
-                            onClick={() => setShowAnthropicKey((v) => !v)}
-                            aria-label={showAnthropicKey ? 'Key verbergen' : 'Key anzeigen'}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1"
+                            onClick={() => onUpdateProvider({ freeOnlyLock: false })}
+                            className="underline underline-offset-4"
                             style={{
-                              color: 'var(--text-muted)',
+                              color: 'var(--text-primary)',
                               background: 'transparent',
                               border: 'none',
+                              padding: 0,
                               cursor: 'pointer',
                             }}
                           >
-                            {showAnthropicKey ? (
-                              <EyeOff size={15} strokeWidth={1.5} />
-                            ) : (
-                              <Eye size={15} strokeWidth={1.5} />
-                            )}
+                            Sperre aufheben
                           </button>
-                        </div>
-                      </label>
+                        </p>
+                      )}
 
-                      <label className="block">
-                        <span
-                          className="mb-1 block text-[12.5px] font-medium"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Claude Modell
-                        </span>
-                        <input
-                          type="text"
-                          value={provider.anthropicModel}
-                          onChange={(e) =>
-                            onUpdateProvider({ anthropicModel: e.target.value })
-                          }
-                          placeholder="claude-sonnet-4-5"
-                          className="font-mono-num h-9 w-full rounded-lg px-3 text-[13px]"
-                          style={{
-                            backgroundColor: 'var(--bg-card)',
-                            border: '1px solid var(--border-strong)',
-                            color: 'var(--text-primary)',
-                          }}
-                        />
-                      </label>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            Anthropic API-Key
+                          </span>
+                          <SecretInput
+                            value={provider.anthropicApiKey}
+                            onChange={(value) => onUpdateProvider({ anthropicApiKey: value })}
+                            placeholder="API-Key einfügen"
+                          />
+                        </label>
+
+                        <label className="block">
+                          <span
+                            className="mb-1.5 block text-[12.5px] font-medium"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            Claude Modell
+                          </span>
+                          <input
+                            type="text"
+                            value={provider.anthropicModel}
+                            onChange={(e) => onUpdateProvider({ anthropicModel: e.target.value })}
+                            placeholder="claude-sonnet-4-5"
+                            className="font-mono-num h-9 w-full rounded-[10px] px-3 text-[13px]"
+                            style={FIELD_STYLE}
+                          />
+                        </label>
+                      </div>
                     </div>
-                  </>
-                )}
-              </div>
+                  )}
+                </div>
+              </details>
             </div>
           )}
 
-          {tab === 'privacy' && (
-            <div className="space-y-5">
-              {/* Local Storage Status Banner */}
-              <div
-                className="rounded-[12px] p-4"
-                style={{
-                  backgroundColor: 'var(--bg-raised)',
-                  border: '1px solid var(--border-hairline)',
-                  borderLeft: '3px solid var(--accent)',
-                }}
+          {tab === 'data' && (
+            <div className="space-y-6">
+              <section>
+                <h3 className="text-[14.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                  Als Desktop-App nutzen (ohne Download-Warnung)
+                </h3>
+
+                {isPwaInstalled ? (
+                  <div className="mt-2">
+                    <StatusLine tone="positive" message="OpenStudy läuft bereits als installierte App." />
+                  </div>
+                ) : canInstallPwa ? (
+                  <div className="mt-2.5 space-y-2.5">
+                    <p className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                      Öffnet OpenStudy in einem eigenen ruhigen Fenster direkt aus dem Startmenü oder
+                      Dock.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleInstallPwa()}
+                      disabled={installingPwa}
+                      className="btn-accent"
+                      style={{ opacity: installingPwa ? 0.6 : 1 }}
+                    >
+                      {installingPwa && (
+                        <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+                      )}
+                      <span>Als Desktop-App installieren</span>
+                    </button>
+                    {pwaFeedback && (
+                      <p role="status" className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
+                        {pwaFeedback}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-1.5 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                    In Chrome oder Edge einfach rechts in der Adressleiste auf das
+                    App-Installieren-Symbol klicken — ganz ohne .exe-Download.
+                  </p>
+                )}
+              </section>
+
+              <section className="space-y-4 pt-6" style={{ borderTop: '1px solid var(--border-hairline)' }}>
+                <div>
+                  <h3 className="text-[14.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                    Lokaler Speicher &amp; Sicherung
+                  </h3>
+                  <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                    Alle Fächer, Notizen, Karteikarten und Schlüssel bleiben ausschliesslich in diesem
+                    Browser gespeichert.
+                  </p>
+                  <p className="font-mono-num mt-2 text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+                    {storageSizeKb} KB belegt · {state.courses.length} Fächer · {state.notes.length}{' '}
+                    Notizen · {state.cards.length} Karten
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <button type="button" onClick={handleExportJson} className="btn-secondary">
+                    <Download size={14} strokeWidth={1.5} />
+                    <span>Backup exportieren (JSON)</span>
+                  </button>
+                  <span className="text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+                    API-Keys werden automatisch entfernt.
+                  </span>
+                </div>
+
+                {exportMessage && <StatusLine tone="positive" message={exportMessage} />}
+              </section>
+
+              <section
+                className="flex flex-wrap items-center justify-between gap-3 pt-6"
+                style={{ borderTop: '1px solid var(--border-hairline)' }}
               >
-                <div className="flex items-start gap-3">
-                  <span
-                    className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                    style={{
-                      backgroundColor: 'var(--accent-soft)',
-                      color: 'var(--accent)',
-                    }}
-                  >
-                    <HardDrive size={17} strokeWidth={1.5} />
-                  </span>
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3
-                        className="text-[15px] font-semibold"
-                        style={{ color: 'var(--text-primary)' }}
-                      >
-                        Nur lokal im Browser gespeichert · 0 Tracking · 0 Cloud-Zwang
-                      </h3>
-                    </div>
-                    <p
-                      className="mt-1 text-[13.5px] leading-relaxed"
-                      style={{ color: 'var(--text-secondary)' }}
-                    >
-                      Alle Kurse, Notizen, Lernkarten, Fokus-Protokolle und deine persönlichen
-                      API-Schlüssel bleiben ausschließlich im lokalen Speicher dieses Browsers.
-                      OpenStudy sendet keine Nutzungsdaten an Dritte.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-5">
-                  <div className="surface-card px-3 py-2">
-                    <div className="font-mono-num text-[16px] font-semibold">
-                      {state.courses.length}
-                    </div>
-                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      Kurse
-                    </div>
-                  </div>
-                  <div className="surface-card px-3 py-2">
-                    <div className="font-mono-num text-[16px] font-semibold">
-                      {state.notes.length}
-                    </div>
-                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      Notizseiten
-                    </div>
-                  </div>
-                  <div className="surface-card px-3 py-2">
-                    <div className="font-mono-num text-[16px] font-semibold">
-                      {state.cards.length}
-                    </div>
-                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      Karteikarten
-                    </div>
-                  </div>
-                  <div className="surface-card px-3 py-2">
-                    <div className="font-mono-num text-[16px] font-semibold">
-                      {state.obsidianNotes.length}
-                    </div>
-                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      Obsidian-Notizen
-                    </div>
-                  </div>
-                  <div className="surface-card px-3 py-2">
-                    <div className="font-mono-num text-[16px] font-semibold">
-                      {storageSizeKb} KB
-                    </div>
-                    <div className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      Lokaler Speicher
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* JSON Backup Export */}
-              <div className="surface-raised flex flex-col justify-between gap-4 p-4 sm:flex-row sm:items-center">
-                <div className="flex items-start gap-3">
-                  <span
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                    style={{
-                      backgroundColor: 'var(--bg-card)',
-                      border: '1px solid var(--border-hairline)',
-                      color: 'var(--accent)',
-                    }}
-                  >
-                    <Database size={16} strokeWidth={1.5} />
-                  </span>
-                  <div>
-                    <h4
-                      className="text-[14.5px] font-semibold"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      Lokales JSON-Backup exportieren
-                    </h4>
-                    <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                      Speichert deine Kurse, Notizen, Karten und Lernziele als Datei. Alle
-                      API-Keys und Tokens werden beim Export automatisch entfernt.
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleExportJson}
-                  className="btn-accent shrink-0"
-                >
-                  <Download size={15} strokeWidth={1.5} />
-                  <span>JSON-Backup laden</span>
-                </button>
-              </div>
-
-              {exportMessage && (
-                <div
-                  className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 text-[13px]"
-                  style={{
-                    backgroundColor: 'var(--positive-soft)',
-                    color: 'var(--positive)',
-                  }}
-                >
-                  <Check size={15} strokeWidth={1.75} className="shrink-0" />
-                  <span>{exportMessage}</span>
-                </div>
-              )}
-
-              {/* Reopen Onboarding */}
-              <div className="surface-raised flex flex-col justify-between gap-4 p-4 sm:flex-row sm:items-center">
-                <div className="flex items-start gap-3">
-                  <span
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                    style={{
-                      backgroundColor: 'var(--bg-card)',
-                      border: '1px solid var(--border-hairline)',
-                      color: 'var(--text-primary)',
-                    }}
-                  >
-                    <Wand2 size={16} strokeWidth={1.5} />
-                  </span>
-                  <div>
-                    <h4
-                      className="text-[14.5px] font-semibold"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      Einrichtungsassistent erneut öffnen
-                    </h4>
-                    <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                      Starte den 3-Schritte-Assistenten noch einmal, um Sprache, Tagesziel oder
-                      den kostenlosen KI-Start in Ruhe neu einzustellen.
-                    </p>
-                  </div>
-                </div>
-
                 <button
                   type="button"
                   onClick={() => {
                     onClose();
                     onReopenOnboarding();
                   }}
-                  className="btn-secondary shrink-0"
+                  className="text-[13px] transition-colors hover:underline"
+                  style={{
+                    color: 'var(--text-secondary)',
+                    background: 'transparent',
+                    border: 'none',
+                    padding: 0,
+                    cursor: 'pointer',
+                    textUnderlineOffset: '4px',
+                  }}
                 >
-                  <Wand2 size={15} strokeWidth={1.5} />
-                  <span>Assistent öffnen</span>
+                  Sprachtutor-Anleitung öffnen
                 </button>
-              </div>
-
-              {/* Reset to Demo Data */}
-              <div className="surface-raised flex flex-col justify-between gap-4 p-4 sm:flex-row sm:items-center">
-                <div className="flex items-start gap-3">
-                  <span
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                    style={{
-                      backgroundColor: 'var(--negative-soft)',
-                      color: 'var(--negative)',
-                    }}
-                  >
-                    <RotateCcw size={16} strokeWidth={1.5} />
-                  </span>
-                  <div>
-                    <h4
-                      className="text-[14.5px] font-semibold"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      Demo-Daten wiederherstellen
-                    </h4>
-                    <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                      Setzt Kurse, Notizen, Karten und lokale Schlüssel auf den neutralen
-                      Auslieferungszustand zurück.
-                    </p>
-                  </div>
-                </div>
 
                 {!confirmReset ? (
                   <button
                     type="button"
                     onClick={() => setConfirmReset(true)}
-                    className="btn-secondary shrink-0"
-                    style={{ color: 'var(--negative)' }}
+                    className="text-[13px] transition-opacity hover:opacity-80"
+                    style={{
+                      color: 'var(--negative)',
+                      background: 'transparent',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                    }}
                   >
-                    <RotateCcw size={15} strokeWidth={1.5} />
-                    <span>Demo-Daten wiederherstellen</span>
+                    Auf Demo-Daten zurücksetzen
                   </button>
                 ) : (
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setConfirmReset(false)}
-                      className="btn-ghost"
+                      className="btn-ghost h-8 px-2.5 text-[12.5px]"
                     >
                       Abbrechen
                     </button>
@@ -1518,35 +1223,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         setConfirmReset(false);
                         setExportMessage(null);
                       }}
-                      className="btn-secondary"
+                      className="h-8 rounded-full px-3 text-[12.5px] font-medium transition-opacity hover:opacity-90"
                       style={{
                         backgroundColor: 'var(--negative-soft)',
-                        borderColor: 'var(--negative)',
+                        border: '1px solid var(--negative)',
                         color: 'var(--negative)',
+                        cursor: 'pointer',
                       }}
                     >
-                      <span>Zurücksetzen bestätigen</span>
+                      Zurücksetzen bestätigen
                     </button>
                   </div>
                 )}
-              </div>
+              </section>
             </div>
           )}
         </div>
 
         {/* Footer */}
         <div
-          className="flex items-center justify-between gap-3 px-6 py-3.5"
-          style={{
-            borderTop: '1px solid var(--border-hairline)',
-            backgroundColor: 'var(--bg-raised)',
-          }}
+          className="flex items-center justify-between gap-4 px-7 py-4"
+          style={{ borderTop: '1px solid var(--border-hairline)' }}
         >
           <span className="text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
             Änderungen werden automatisch lokal gespeichert.
           </span>
           <button type="button" onClick={onClose} className="btn-primary">
-            <span>Fertig</span>
+            Fertig
           </button>
         </div>
       </div>

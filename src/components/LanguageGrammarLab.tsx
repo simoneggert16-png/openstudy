@@ -412,23 +412,24 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
             Fünf Lernsprachen mit kuratierten Übungen, Textprüfung und striktem Language-Lock
           </p>
           <h1
-            className="mt-1 text-[26px] font-semibold tracking-tight sm:text-[28px]"
-            style={{ color: 'var(--text-primary)', lineHeight: 1.2 }}
+            className="font-display font-normal mt-1 text-[30px] sm:text-[34px] leading-[1.15]"
+            style={{ color: 'var(--text-primary)' }}
           >
             Sprachen & Grammatik-Labor
           </h1>
         </div>
         <div className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-          <Languages size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
+          <Languages size={15} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
           <span>{spec.nativeLabel}</span>
-          <span>·</span>
+          <span style={{ color: 'var(--border-strong)' }}>·</span>
           <span>{spec.focusAreas}</span>
         </div>
       </header>
 
-      {/* 5 Language Tabs */}
+      {/* 5 Language Tabs (clean editorial underline strip) */}
       <nav
-        className="flex flex-wrap gap-2"
+        className="flex flex-wrap gap-6 border-b"
+        style={{ borderColor: 'var(--border-hairline)' }}
         aria-label="Sprache auswählen"
       >
         {LANGUAGE_SPECS.map((lang) => {
@@ -442,60 +443,62 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
                 setSelectedLang(lang.code);
                 setCheckError(null);
               }}
-              className="flex items-center gap-2.5 rounded-xl border px-3.5 py-2 text-left transition-colors cursor-pointer"
+              className="relative flex items-baseline gap-2 pb-3 text-left transition-colors cursor-pointer"
               style={{
-                backgroundColor: active ? 'var(--bg-card)' : 'var(--bg-raised)',
-                borderColor: active ? 'var(--accent-border)' : 'var(--border-hairline)',
                 color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
               }}
             >
               <span
-                className="font-mono-num rounded-md px-1.5 py-0.5 text-[11px] font-medium"
+                className="font-mono-num text-[11.5px] font-medium"
                 style={{
-                  backgroundColor: active ? 'var(--accent-soft)' : 'var(--bg-page)',
                   color: active ? 'var(--accent)' : 'var(--text-muted)',
                 }}
               >
                 {lang.short}
               </span>
-              <span className="text-[14px] font-medium">{lang.nativeLabel}</span>
-              <span className="font-mono-num text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[14.5px] font-medium">{lang.nativeLabel}</span>
+              <span className="font-mono-num text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
                 {solvedCount}/{lang.exercises.length}
               </span>
+              {active && (
+                <span
+                  className="absolute inset-x-0 -bottom-px h-[2px] rounded-full"
+                  style={{ backgroundColor: 'var(--accent)' }}
+                />
+              )}
             </button>
           );
         })}
       </nav>
 
       {/* 1-Click Language-Lock Voice Tutor Card */}
-      <section
-        className="surface-card flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
-        style={{ borderColor: 'var(--accent-border)' }}
-      >
+      <section className="surface-card flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
             <span
-              className="rounded-md px-2 py-0.5 text-[12px] font-medium"
-              style={{
-                backgroundColor: 'var(--accent-soft)',
-                color: 'var(--accent)',
-              }}
-            >
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ backgroundColor: 'var(--accent-warm)' }}
+            />
+            <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
               Language-Lock: {spec.nativeLabel}
             </span>
-            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            <span style={{ color: 'var(--border-strong)' }}>·</span>
+            <span style={{ color: 'var(--text-muted)' }}>
               Echtzeit-Konversation ohne ungewollten Sprachwechsel
             </span>
           </div>
-          <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <h2
+            className="font-display font-normal text-[21px] leading-snug"
+            style={{ color: 'var(--text-primary)' }}
+          >
             Mündlich auf {spec.label} trainieren
           </h2>
-          <p className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            Der Voice Tutor bleibt konsequent auf {spec.nativeLabel} und korrigiert sanft Ausdruck, Zeiten und Aussprache.
+          <p className="text-[13.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            Der Sprachtutor bleibt konsequent auf {spec.nativeLabel} und korrigiert behutsam Ausdruck, Zeitformen und Aussprache.
           </p>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center shrink-0">
           <label className="inline-flex items-center gap-2.5 text-[13px] cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
             <input
               type="checkbox"
@@ -503,7 +506,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
               onChange={(e) => setBilingualHelp(e.target.checked)}
               className="h-4 w-4 rounded accent-[var(--accent)] cursor-pointer"
             />
-            <span>Kurze Grammatik-Hilfe auf Deutsch erlauben</span>
+            <span>Kurze Grammatik-Hilfe auf Deutsch</span>
           </label>
           <button
             type="button"
@@ -517,25 +520,31 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
             className="btn-accent shrink-0"
           >
             <Mic size={16} strokeWidth={1.5} />
-            <span>Mündlich auf {spec.nativeLabel} üben (Language-Lock)</span>
+            <span>Auf {spec.nativeLabel} sprechen</span>
           </button>
         </div>
       </section>
 
-      {/* Main Split: Interactive Drills + AI Grammar Checker */}
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+      {/* Main Split: Interactive Drills + Grammar Checker */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
         {/* Left: Interactive Grammar Exercises */}
-        <section className="surface-card flex flex-col justify-between p-5 xl:col-span-6">
+        <section className="surface-card flex flex-col justify-between p-6 xl:col-span-6">
           <div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div
+              className="flex flex-wrap items-center justify-between gap-2 border-b pb-3.5"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
               <div className="flex items-center gap-2">
-                <BookOpenCheck size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Grammatik-Übungen ({spec.nativeLabel})
+                <BookOpenCheck size={17} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
+                <h2
+                  className="font-display font-normal text-[21px] leading-snug"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Grammatik-Übungen
                 </h2>
               </div>
               <div className="flex items-center gap-2">
-                <span className="font-mono-num text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-mono-num text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
                   {langProgress.correct} / {langProgress.total} richtig
                 </span>
                 {langProgress.answered > 0 && (
@@ -551,7 +560,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
               </div>
             </div>
 
-            {/* Exercise stepper pills */}
+            {/* Exercise stepper */}
             <div className="mt-4 flex flex-wrap items-center gap-1.5">
               {spec.exercises.map((ex, idx) => {
                 const ans = answers[ex.id];
@@ -563,7 +572,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
                     key={ex.id}
                     type="button"
                     onClick={() => setCurrentIndex(idx)}
-                    className="font-mono-num flex h-8 min-w-[34px] items-center justify-center gap-1 rounded-lg border px-2 text-[12px] font-medium transition-colors cursor-pointer"
+                    className="font-mono-num flex h-7 min-w-[30px] items-center justify-center rounded-full border px-2 text-[12px] font-medium transition-colors cursor-pointer"
                     style={{
                       backgroundColor: active
                         ? 'var(--text-primary)'
@@ -571,7 +580,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
                         ? right
                           ? 'var(--positive-soft)'
                           : 'var(--negative-soft)'
-                        : 'var(--bg-page)',
+                        : 'transparent',
                       color: active
                         ? 'var(--bg-card)'
                         : solved
@@ -586,42 +595,36 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
                   </button>
                 );
               })}
-              <span className="ml-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="ml-2 text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
                 {currentExercise.topic}
               </span>
             </div>
 
-            {/* Exercise prompt */}
-            <div
-              className="mt-4 rounded-xl border p-4"
-              style={{
-                backgroundColor: 'var(--bg-page)',
-                borderColor: 'var(--border-hairline)',
-              }}
-            >
-              <p className="text-[15px] font-medium leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+            {/* Exercise prompt directly on editorial canvas */}
+            <div className="my-5">
+              <p
+                className="font-display font-normal text-[21px] leading-[1.4]"
+                style={{ color: 'var(--text-primary)' }}
+              >
                 {currentExercise.prompt}
               </p>
             </div>
 
-            {/* Options */}
-            <div className="mt-3.5 space-y-2">
+            {/* Options as crisp hairline rows */}
+            <div className="divide-y border-y" style={{ borderColor: 'var(--border-hairline)' }}>
               {currentExercise.options.map((option, idx) => {
                 const isSelected = chosenOption === idx;
                 const isRightOption = idx === currentExercise.correctIndex;
 
-                let bg = 'var(--bg-card)';
-                let border = 'var(--border-hairline)';
+                let bg = 'transparent';
                 let text = 'var(--text-primary)';
 
                 if (isAnswered) {
                   if (isRightOption) {
                     bg = 'var(--positive-soft)';
-                    border = 'var(--positive)';
                     text = 'var(--text-primary)';
                   } else if (isSelected) {
                     bg = 'var(--negative-soft)';
-                    border = 'var(--negative)';
                     text = 'var(--text-primary)';
                   } else {
                     text = 'var(--text-muted)';
@@ -634,16 +637,16 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
                     type="button"
                     disabled={isAnswered}
                     onClick={() => handleSelectOption(idx)}
-                    className="flex w-full items-center justify-between gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors cursor-pointer disabled:cursor-default"
+                    className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left transition-colors cursor-pointer disabled:cursor-default hover:bg-[var(--bg-page)]/70"
                     style={{
                       backgroundColor: bg,
-                      borderColor: border,
+                      borderColor: 'var(--border-hairline)',
                       color: text,
                     }}
                   >
                     <div className="flex items-center gap-3">
                       <span className="keycap shrink-0">{OPTION_KEYS[idx]}</span>
-                      <span className="text-[14px]">{option}</span>
+                      <span className="text-[14.5px]">{option}</span>
                     </div>
                     {isAnswered && isRightOption && (
                       <CheckCircle2 size={16} strokeWidth={1.5} style={{ color: 'var(--positive)' }} className="shrink-0" />
@@ -656,20 +659,19 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
               })}
             </div>
 
-            {/* Instant Explanation */}
+            {/* Instant Explanation (flat editorial left rule) */}
             {isAnswered && (
               <div
-                className="mt-4 rounded-xl border p-3.5 text-[13px] leading-relaxed"
+                className="mt-4 border-l-2 py-1 pl-3.5 text-[13.5px] leading-relaxed"
                 style={{
-                  backgroundColor: isCorrect ? 'var(--positive-soft)' : 'var(--warning-soft)',
-                  borderColor: 'var(--border-hairline)',
+                  borderColor: isCorrect ? 'var(--positive)' : 'var(--accent-warm)',
                   color: 'var(--text-primary)',
                 }}
               >
-                <p className="font-semibold" style={{ color: isCorrect ? 'var(--positive)' : 'var(--warning)' }}>
+                <p className="font-medium" style={{ color: isCorrect ? 'var(--positive)' : 'var(--accent-warm)' }}>
                   {isCorrect ? 'Richtig gelöst' : 'Kurze Erklärung'}
                 </p>
-                <p className="mt-1" style={{ color: 'var(--text-primary)' }}>
+                <p className="mt-1" style={{ color: 'var(--text-secondary)' }}>
                   {currentExercise.explanation}
                 </p>
               </div>
@@ -678,14 +680,14 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
 
           {/* Prev / Next Footer */}
           <div
-            className="mt-5 flex items-center justify-between border-t pt-4"
+            className="mt-6 flex items-center justify-between border-t pt-4"
             style={{ borderColor: 'var(--border-hairline)' }}
           >
             <button
               type="button"
               disabled={currentExerciseIndex === 0}
               onClick={() => setCurrentIndex(currentExerciseIndex - 1)}
-              className="btn-secondary h-8 px-3 text-[13px] disabled:opacity-45"
+              className="btn-secondary h-8 px-3.5 text-[13px] disabled:opacity-45"
             >
               <ChevronLeft size={14} strokeWidth={1.5} />
               <span>Vorherige</span>
@@ -697,7 +699,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
               type="button"
               disabled={currentExerciseIndex >= spec.exercises.length - 1}
               onClick={() => setCurrentIndex(currentExerciseIndex + 1)}
-              className="btn-secondary h-8 px-3 text-[13px] disabled:opacity-45"
+              className="btn-secondary h-8 px-3.5 text-[13px] disabled:opacity-45"
             >
               <span>Nächste</span>
               <ChevronRight size={14} strokeWidth={1.5} />
@@ -705,13 +707,19 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
           </div>
         </section>
 
-        {/* Right: AI Grammar & Style Checker */}
-        <section className="surface-card flex flex-col p-5 xl:col-span-6">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Right: Grammar & Style Checker */}
+        <section className="surface-card flex flex-col p-6 xl:col-span-6">
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 border-b pb-3.5"
+            style={{ borderColor: 'var(--border-hairline)' }}
+          >
             <div className="flex items-center gap-2">
-              <FileCheck2 size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-              <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                KI-Grammatik- & Text-Prüfer
+              <FileCheck2 size={17} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
+              <h2
+                className="font-display font-normal text-[21px] leading-snug"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Grammatik- & Text-Prüfer
               </h2>
             </div>
             <button
@@ -726,7 +734,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
             </button>
           </div>
 
-          <p className="mt-1.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+          <p className="mt-3.5 text-[13.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
             Schreibe einen Satz oder kurzen Absatz auf {spec.label}. Du erhältst eine behutsame Korrektur mit verständlicher Erklärung.
           </p>
 
@@ -735,7 +743,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
             onChange={(e) => setDraftText(e.target.value)}
             rows={5}
             placeholder={spec.placeholder}
-            className="mt-3.5 w-full resize-y rounded-xl border p-3.5 text-[14px] leading-relaxed"
+            className="mt-3.5 w-full resize-y rounded-xl border p-3.5 text-[14.5px] leading-relaxed"
             style={{
               backgroundColor: 'var(--bg-page)',
               borderColor: 'var(--border-hairline)',
@@ -743,7 +751,7 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
             }}
           />
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2">
             <span className="font-mono-num text-[12px]" style={{ color: 'var(--text-muted)' }}>
               {draftText.trim() ? `${draftText.trim().split(/\s+/).length} Wörter` : 'Bereit für Eingabe'}
             </span>
@@ -785,55 +793,45 @@ export const LanguageGrammarLab: React.FC<LanguageGrammarLabProps> = ({
           {/* Setup hint / error */}
           {checkError && (
             <div
-              className="mt-4 rounded-xl border p-3.5 text-[13px] leading-relaxed"
+              className="mt-5 border-l-2 py-1 pl-3.5 text-[13px] leading-relaxed"
               style={{
-                backgroundColor: 'var(--warning-soft)',
-                borderColor: 'var(--border-hairline)',
+                borderColor: 'var(--accent-warm)',
                 color: 'var(--text-primary)',
               }}
             >
               <div className="flex items-start gap-2">
-                <AlertCircle size={16} strokeWidth={1.5} className="mt-0.5 shrink-0" style={{ color: 'var(--warning)' }} />
+                <AlertCircle size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" style={{ color: 'var(--accent-warm)' }} />
                 <div>
-                  <p className="font-medium" style={{ color: 'var(--warning)' }}>
+                  <p className="font-medium" style={{ color: 'var(--accent-warm)' }}>
                     KI-Provider noch nicht verbunden
                   </p>
                   <p className="mt-1" style={{ color: 'var(--text-secondary)' }}>
                     {checkError}
                   </p>
                   <p className="mt-1.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                    Tipp: Öffne oben die KI-Einstellungen und hinterlege einen kostenlosen Google AI Studio Key oder verbinde lokal laufendes Ollama.
+                    Hinweis: Öffne oben die Einstellungen und hinterlege einen Google AI Studio Schlüssel oder verbinde lokal laufendes Ollama.
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Result card */}
+          {/* Result section directly on canvas below hairline */}
           {checkResult && (
             <div
-              className="mt-4 flex-1 rounded-xl border p-4"
-              style={{
-                backgroundColor: 'var(--bg-page)',
-                borderColor: 'var(--border-hairline)',
-              }}
+              className="mt-5 flex-1 border-t pt-4"
+              style={{ borderColor: 'var(--border-hairline)' }}
             >
-              <div className="flex items-center justify-between gap-2 border-b pb-2.5" style={{ borderColor: 'var(--border-hairline)' }}>
-                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[13.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
                   Rückmeldung ({LANGUAGE_SPECS.find((l) => l.code === checkResult.lang)?.nativeLabel})
                 </span>
-                <span
-                  className="rounded-md px-2 py-0.5 text-[11px]"
-                  style={{
-                    backgroundColor: 'var(--bg-raised)',
-                    color: 'var(--text-muted)',
-                  }}
-                >
+                <span className="font-mono-num text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
                   {checkResult.usedProvider}
                 </span>
               </div>
               <div
-                className="mt-3 whitespace-pre-wrap text-[14px] leading-relaxed"
+                className="mt-3 whitespace-pre-wrap text-[14.5px] leading-relaxed"
                 style={{ color: 'var(--text-primary)' }}
               >
                 {checkResult.text}

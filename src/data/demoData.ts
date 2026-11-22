@@ -7,8 +7,9 @@ const now = Date.now();
 
 export function createDemoState(): OpenStudyState {
   return {
-    onboardingDone: false,
+    onboardingDone: true,
     theme: 'light',
+    colorScheme: 'focus-cream',
     dailyGoalMinutes: 45,
     streakDays: 6,
     activeCourseId: 'course-english',
@@ -17,7 +18,7 @@ export function createDemoState(): OpenStudyState {
         id: 'course-english',
         title: 'English B2 — Speaking & Grammar',
         category: 'language',
-        accentColor: '#0f766e',
+        accentColor: '#0E4D48',
         examDate: '2026-12-10',
         description: 'Conditionals, tense precision, reported speech, and confident spoken fluency.',
         objectives: [
@@ -51,7 +52,7 @@ export function createDemoState(): OpenStudyState {
         id: 'course-biology',
         title: 'Biology — Cell Structure & Genetics',
         category: 'science',
-        accentColor: '#1d4ed8',
+        accentColor: '#3A7D6E',
         examDate: '2026-12-16',
         description: 'Eukaryotic organelles, mitosis vs. meiosis, DNA replication, and protein synthesis.',
         objectives: [
@@ -79,7 +80,7 @@ export function createDemoState(): OpenStudyState {
         id: 'course-history',
         title: 'Modern History — Industrial Revolution',
         category: 'humanities',
-        accentColor: '#b45309',
+        accentColor: '#D96B27',
         examDate: '2026-12-22',
         description: 'Technological breakthroughs, urbanization, labor movements, and economic shifts from 1760 to 1900.',
         objectives: [

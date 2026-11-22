@@ -787,29 +787,35 @@ export function NotionWorkspace({
   }, [activeNote]);
 
   return (
-    <div className="animate-enter space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
+    <div className="mx-auto max-w-6xl animate-enter space-y-6 pb-10">
+      <header
+        className="flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-end sm:justify-between"
+        style={{ borderColor: 'var(--border-hairline)' }}
+      >
         <div>
-          <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[var(--text-primary)]">
+          <p className="text-[13px] text-[var(--text-secondary)]">
+            Lokaler Block-Editor mit [[Wikilinks]], Markdown-Export und Karteikarten-Erzeugung
+          </p>
+          <h1 className="font-display font-normal mt-1 text-[30px] sm:text-[34px] leading-[1.15] text-[var(--text-primary)]">
             Notizen & Wissensbasis
           </h1>
-          <p className="text-[14px] text-[var(--text-secondary)]">
-            Lokaler Block-Editor mit [[Wikilinks]], Markdown-Export und direkter Karteikarten-Erzeugung.
-          </p>
         </div>
         <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)] font-mono-num">
           <span>{state.notes.length} Seiten</span>
           <span>·</span>
           <span>{state.obsidianNotes.length} Obsidian-Dateien</span>
         </div>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[296px_minmax(0,1fr)] gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[296px_minmax(0,1fr)] gap-6 items-start">
         {/* Left Sidebar: Pages & Filters */}
-        <aside className="surface-card p-3.5 flex flex-col gap-3 lg:sticky lg:top-6">
+        <aside className="surface-card p-4 flex flex-col gap-3.5 lg:sticky lg:top-6">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[14px] font-medium text-[var(--text-primary)]">
-              Seiten ({filteredNotes.length})
+            <span className="font-display font-normal text-[19px] text-[var(--text-primary)]">
+              Seiten{' '}
+              <span className="font-mono-num text-[13px] text-[var(--text-muted)]">
+                ({filteredNotes.length})
+              </span>
             </span>
             <button
               type="button"
@@ -834,14 +840,14 @@ export function NotionWorkspace({
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Notizen durchsuchen..."
               aria-label="Notizen durchsuchen"
-              className="w-full h-9 pl-9 pr-8 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+              className="w-full h-9 pl-9 pr-8 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
                 aria-label="Suche leeren"
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
               >
                 <X size={14} strokeWidth={1.5} />
               </button>
@@ -849,17 +855,20 @@ export function NotionWorkspace({
           </div>
 
           {/* Course Filter Pills */}
-          <div className="flex flex-wrap gap-1.5">
+          <div
+            className="flex flex-wrap gap-1.5 border-b pb-3"
+            style={{ borderColor: 'var(--border-hairline)' }}
+          >
             <button
               type="button"
               onClick={() => setCourseFilter('all')}
-              className={`px-2.5 py-1 rounded-md text-[12.5px] font-medium transition-colors border ${
+              className={`px-2.5 py-1 rounded-full text-[12px] font-medium transition-colors cursor-pointer ${
                 courseFilter === 'all'
-                  ? 'bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent-border)]'
-                  : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-hairline)] hover:bg-[var(--bg-raised)]'
+                  ? 'bg-[var(--text-primary)] text-[var(--bg-card)]'
+                  : 'bg-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-raised)]'
               }`}
             >
-              Alle Fächer
+              Alle
             </button>
             {state.courses.map((course) => {
               const isActive = courseFilter === course.id;
@@ -871,14 +880,14 @@ export function NotionWorkspace({
                     setCourseFilter(course.id);
                     onSelectCourse(course.id);
                   }}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[12.5px] font-medium transition-colors border max-w-full ${
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium transition-colors max-w-full cursor-pointer ${
                     isActive
-                      ? 'bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent-border)]'
-                      : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-hairline)] hover:bg-[var(--bg-raised)]'
+                      ? 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                      : 'bg-transparent text-[var(--text-secondary)] hover:bg-[var(--bg-raised)]'
                   }`}
                 >
                   <span
-                    className="w-2 h-2 rounded-full shrink-0"
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
                     style={{ backgroundColor: course.accentColor }}
                   />
                   <span className="truncate max-w-[140px]">
@@ -889,10 +898,10 @@ export function NotionWorkspace({
             })}
           </div>
 
-          {/* Page list */}
-          <div className="space-y-1 max-h-[520px] overflow-y-auto pr-0.5">
+          {/* Page list (flat hairline rows) */}
+          <div className="divide-y divide-[var(--border-hairline)] max-h-[520px] overflow-y-auto pr-0.5">
             {filteredNotes.length === 0 ? (
-              <div className="surface-raised p-4 text-center space-y-2">
+              <div className="py-6 text-center space-y-2.5">
                 <p className="text-[13px] text-[var(--text-secondary)]">
                   Keine passenden Notizen gefunden.
                 </p>
@@ -924,21 +933,27 @@ export function NotionWorkspace({
                       setPreviewObsidianNote(null);
                       setConfirmDeleteId(null);
                     }}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors ${
+                    className={`w-full text-left px-2.5 py-2.5 transition-colors cursor-pointer ${
                       isSelected
-                        ? 'bg-[var(--accent-soft)] border-[var(--accent-border)]'
-                        : 'bg-transparent border-transparent hover:bg-[var(--bg-raised)]'
+                        ? 'bg-[var(--accent-soft)] rounded-lg'
+                        : 'bg-transparent hover:bg-[var(--bg-page)]/80'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <span className="text-[13.5px] font-medium leading-snug line-clamp-2 text-[var(--text-primary)]">
+                      <span
+                        className={`text-[13.5px] leading-snug line-clamp-2 ${
+                          isSelected
+                            ? 'font-medium text-[var(--accent)]'
+                            : 'font-medium text-[var(--text-primary)]'
+                        }`}
+                      >
                         {note.title.trim() || 'Unbenannte Seite'}
                       </span>
-                      <span className="shrink-0 inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-[var(--bg-raised)] text-[var(--text-muted)]">
+                      <span className="shrink-0 text-[11px] text-[var(--text-muted)]">
                         {SOURCE_META[note.source].label}
                       </span>
                     </div>
-                    <div className="mt-1.5 flex items-center justify-between gap-2 text-[12px] text-[var(--text-muted)]">
+                    <div className="mt-1 flex items-center justify-between gap-2 text-[11.5px] text-[var(--text-muted)]">
                       <span className="inline-flex items-center gap-1.5 truncate">
                         {course && (
                           <span
@@ -950,7 +965,7 @@ export function NotionWorkspace({
                           {course ? course.title.split('—')[0].trim() : 'Allgemein'}
                         </span>
                       </span>
-                      <span className="font-mono-num shrink-0 text-[11.5px]">
+                      <span className="font-mono-num shrink-0">
                         {todos.length > 0 ? `${doneTodos}/${todos.length} · ` : ''}
                         {note.updatedAt}
                       </span>
@@ -962,7 +977,7 @@ export function NotionWorkspace({
           </div>
 
           {state.obsidianNotes.length > 0 && (
-            <div className="pt-2.5 border-t border-[var(--border-hairline)] space-y-1.5">
+            <div className="pt-3 border-t border-[var(--border-hairline)] space-y-1.5">
               <div className="flex items-center justify-between text-[12px] text-[var(--text-muted)] px-1">
                 <span className="inline-flex items-center gap-1.5">
                   <FolderOpen size={13} strokeWidth={1.5} />
@@ -976,10 +991,10 @@ export function NotionWorkspace({
                     key={obs.path}
                     type="button"
                     onClick={() => setPreviewObsidianNote(obs)}
-                    className={`w-full text-left px-2.5 py-1.5 rounded-md text-[12.5px] truncate transition-colors ${
+                    className={`w-full text-left px-2.5 py-1.5 rounded-md text-[12.5px] truncate transition-colors cursor-pointer ${
                       previewObsidianNote?.path === obs.path
                         ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-medium'
-                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-raised)] hover:text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-page)] hover:text-[var(--text-primary)]'
                     }`}
                   >
                     {obs.title}
@@ -991,16 +1006,16 @@ export function NotionWorkspace({
         </aside>
 
         {/* Right Main Editor / Obsidian Preview */}
-        <section className="surface-card p-5 sm:p-7 min-h-[600px] flex flex-col gap-5">
+        <section className="surface-card p-6 sm:p-8 min-h-[600px] flex flex-col gap-5">
           {previewObsidianNote ? (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[var(--border-hairline)]">
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-[var(--border-hairline)]">
                 <div className="space-y-1">
                   <div className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--accent)] font-medium">
                     <FolderOpen size={14} strokeWidth={1.5} />
                     Obsidian-Vorschau (schreibgeschützt)
                   </div>
-                  <h2 className="text-[22px] font-semibold tracking-[-0.02em] text-[var(--text-primary)]">
+                  <h2 className="font-display font-normal text-[26px] leading-tight text-[var(--text-primary)]">
                     {previewObsidianNote.title}
                   </h2>
                   <p className="text-[12.5px] font-mono-num text-[var(--text-muted)]">
@@ -1037,7 +1052,7 @@ export function NotionWorkspace({
                       key={wl}
                       type="button"
                       onClick={() => handleWikilinkClick(wl)}
-                      className="px-2 py-0.5 rounded-md text-[12.5px] bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent-border)] hover:opacity-90"
+                      className="px-2 py-0.5 rounded-md text-[12.5px] bg-[var(--accent-soft)] text-[var(--accent)] hover:opacity-90 cursor-pointer"
                     >
                       [[{wl}]]
                     </button>
@@ -1045,17 +1060,15 @@ export function NotionWorkspace({
                 </div>
               )}
 
-              <pre className="surface-raised p-4 whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[var(--text-primary)] font-sans max-h-[520px] overflow-y-auto">
+              <pre className="pt-1 whitespace-pre-wrap break-words text-[14.5px] leading-relaxed text-[var(--text-primary)] font-sans max-h-[540px] overflow-y-auto">
                 {previewObsidianNote.content}
               </pre>
             </div>
           ) : !activeNote ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center py-16 space-y-3">
-              <div className="w-11 h-11 rounded-xl bg-[var(--bg-raised)] border border-[var(--border-hairline)] flex items-center justify-center text-[var(--text-muted)]">
-                <FileText size={20} strokeWidth={1.5} />
-              </div>
+              <FileText size={24} strokeWidth={1.5} className="text-[var(--text-muted)]" />
               <div className="space-y-1 max-w-sm">
-                <h2 className="text-[17px] font-medium text-[var(--text-primary)]">
+                <h2 className="font-display font-normal text-[22px] text-[var(--text-primary)]">
                   Noch keine Notizseite vorhanden
                 </h2>
                 <p className="text-[14px] text-[var(--text-secondary)]">
@@ -1075,9 +1088,9 @@ export function NotionWorkspace({
             <>
               {/* Editor Top Meta & Action Toolbar */}
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[var(--border-hairline)]">
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Course Pill Selector */}
-                  <div className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)]">
+                <div className="flex flex-wrap items-center gap-2.5 text-[12.5px] text-[var(--text-secondary)]">
+                  {/* Inline Course Selector */}
+                  <div className="inline-flex items-center gap-1.5">
                     <span
                       className="w-2 h-2 rounded-full shrink-0"
                       style={{
@@ -1105,14 +1118,18 @@ export function NotionWorkspace({
                     </select>
                   </div>
 
-                  {/* Source Badge */}
-                  <span className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[12.5px] font-medium text-[var(--text-secondary)]">
+                  <span className="text-[var(--border-strong)]">·</span>
+
+                  {/* Inline Source Indicator */}
+                  <span className="inline-flex items-center gap-1 text-[var(--text-muted)]">
                     <SourceIcon source={activeNote.source} />
                     {SOURCE_META[activeNote.source].label}
                   </span>
 
+                  <span className="text-[var(--border-strong)]">·</span>
+
                   {/* Updated Date & Todo Progress */}
-                  <span className="text-[12.5px] text-[var(--text-muted)] font-mono-num px-1">
+                  <span className="text-[var(--text-muted)] font-mono-num">
                     {activeNote.updatedAt}
                     {todoStats.total > 0 && ` · ${todoStats.done}/${todoStats.total} Aufgaben`}
                   </span>
@@ -1123,10 +1140,10 @@ export function NotionWorkspace({
                   <button
                     type="button"
                     onClick={handleGenerateCards}
-                    className="btn-accent h-8 px-3 text-[13px]"
+                    className="btn-accent h-8 px-3.5 text-[13px]"
                   >
-                    <Layers size={15} strokeWidth={1.5} />
-                    Karteikarten aus dieser Seite erzeugen
+                    <Layers size={14} strokeWidth={1.5} />
+                    Karteikarten erzeugen
                   </button>
                   <button
                     type="button"
@@ -1134,7 +1151,7 @@ export function NotionWorkspace({
                     className="btn-secondary h-8 px-3 text-[13px]"
                     title="Als Obsidian-kompatible Markdown-Datei exportieren"
                   >
-                    <Download size={15} strokeWidth={1.5} />
+                    <Download size={14} strokeWidth={1.5} />
                     Markdown
                   </button>
 
@@ -1143,7 +1160,7 @@ export function NotionWorkspace({
                       <button
                         type="button"
                         onClick={() => handleConfirmDelete(activeNote.id)}
-                        className="h-8 px-2.5 rounded-lg text-[12.5px] font-medium bg-[var(--negative-soft)] text-[var(--negative)] border border-[var(--negative)] cursor-pointer"
+                        className="h-8 px-2.5 rounded-full text-[12.5px] font-medium bg-[var(--negative-soft)] text-[var(--negative)] cursor-pointer"
                       >
                         Löschen bestätigen
                       </button>
@@ -1169,39 +1186,33 @@ export function NotionWorkspace({
                 </div>
               </div>
 
-              {/* Inline Confirmation Feedback */}
+              {/* Inline Confirmation Feedback (flat left rule) */}
               {feedback && (
                 <div
-                  className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-lg text-[13.5px] border"
+                  className="flex items-center justify-between gap-3 border-l-2 py-1 pl-3 text-[13px]"
                   style={{
-                    backgroundColor:
-                      feedback.tone === 'positive'
-                        ? 'var(--positive-soft)'
-                        : feedback.tone === 'warning'
-                          ? 'var(--warning-soft)'
-                          : 'var(--bg-raised)',
                     borderColor:
                       feedback.tone === 'positive'
                         ? 'var(--positive)'
                         : feedback.tone === 'warning'
-                          ? 'var(--warning)'
-                          : 'var(--border-hairline)',
+                          ? 'var(--accent-warm)'
+                          : 'var(--accent)',
                     color:
                       feedback.tone === 'positive'
                         ? 'var(--positive)'
                         : feedback.tone === 'warning'
-                          ? 'var(--warning)'
+                          ? 'var(--accent-warm)'
                           : 'var(--text-primary)',
                   }}
                 >
                   <span className="inline-flex items-center gap-2">
-                    <Check size={15} strokeWidth={1.5} className="shrink-0" />
+                    <Check size={14} strokeWidth={1.5} className="shrink-0" />
                     {feedback.message}
                   </span>
                   <button
                     type="button"
                     onClick={() => setFeedback(null)}
-                    aria-label="Hinweis schließen"
+                    aria-label="Hinweis schliessen"
                     className="p-0.5 rounded opacity-80 hover:opacity-100 cursor-pointer"
                   >
                     <X size={14} strokeWidth={1.5} />
@@ -1209,7 +1220,7 @@ export function NotionWorkspace({
                 </div>
               )}
 
-              {/* Page Title & Tags */}
+              {/* Page Title (.font-display) & Tags */}
               <div className="space-y-2.5">
                 <input
                   type="text"
@@ -1217,7 +1228,7 @@ export function NotionWorkspace({
                   onChange={(e) => handleTitleChange(e.target.value)}
                   placeholder="Seitentitel eingeben..."
                   aria-label="Seitentitel"
-                  className="w-full bg-transparent border-none text-[24px] sm:text-[26px] font-semibold tracking-[-0.02em] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] px-0 py-0.5"
+                  className="font-display font-normal w-full bg-transparent border-none text-[28px] sm:text-[32px] leading-[1.2] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] px-0 py-0.5"
                 />
 
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -1225,7 +1236,7 @@ export function NotionWorkspace({
                   {activeNote.tags.map((tag) => (
                     <span
                       key={tag}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] bg-[var(--bg-raised)] text-[var(--text-secondary)] border border-[var(--border-hairline)]"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] bg-[var(--bg-raised)] text-[var(--text-secondary)]"
                     >
                       #{tag}
                       <button
@@ -1255,13 +1266,13 @@ export function NotionWorkspace({
                         }
                       }}
                       placeholder="Tag eingeben..."
-                      className="h-6 px-2 rounded-md text-[12px] bg-[var(--bg-raised)] border border-[var(--accent-border)] text-[var(--text-primary)] w-32"
+                      className="h-6 px-2.5 rounded-full text-[12px] bg-[var(--bg-page)] border border-[var(--accent-border)] text-[var(--text-primary)] w-32"
                     />
                   ) : (
                     <button
                       type="button"
                       onClick={() => setShowTagInput(true)}
-                      className="px-2 py-0.5 rounded-md text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-raised)] transition-colors cursor-pointer"
+                      className="px-2 py-0.5 rounded-full text-[12px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-raised)] transition-colors cursor-pointer"
                     >
                       + Tag
                     </button>
@@ -1270,15 +1281,15 @@ export function NotionWorkspace({
               </div>
 
               {/* Block Editor Stream */}
-              <div className="space-y-2.5 flex-1">
+              <div className="space-y-2.5 flex-1 pt-1">
                 {activeNote.blocks.map((block, index) => {
                   const inlineLinks = extractWikilinksFromText(block.text);
 
                   const blockInputStyle =
                     block.type === 'h1'
-                      ? 'text-[20px] font-semibold tracking-[-0.015em] leading-snug text-[var(--text-primary)]'
+                      ? 'font-display font-normal text-[23px] leading-snug text-[var(--text-primary)]'
                       : block.type === 'h2'
-                        ? 'text-[17px] font-medium tracking-[-0.01em] leading-snug text-[var(--text-primary)]'
+                        ? 'font-display font-normal text-[19px] leading-snug text-[var(--text-primary)]'
                         : block.type === 'code'
                           ? 'font-mono-num text-[13.5px] leading-relaxed text-[var(--text-primary)]'
                           : block.type === 'todo' && block.checked
@@ -1287,9 +1298,9 @@ export function NotionWorkspace({
 
                   const blockWrapperStyle =
                     block.type === 'callout'
-                      ? 'border-l-[3px] border-[var(--accent)] bg-[var(--accent-soft)] rounded-r-lg px-4 py-3'
+                      ? 'border-l-[3px] border-[var(--accent-warm)] bg-[var(--accent-warm-soft)] rounded-r-lg px-4 py-3'
                       : block.type === 'code'
-                        ? 'bg-[var(--bg-raised)] border border-[var(--border-hairline)] rounded-lg px-3.5 py-2.5'
+                        ? 'bg-[var(--bg-page)] border-l-2 border-[var(--border-strong)] rounded-r-lg px-3.5 py-2.5'
                         : 'px-1 py-1 rounded-lg hover:bg-[var(--bg-page)]/60 transition-colors';
 
                   return (
@@ -1328,7 +1339,7 @@ export function NotionWorkspace({
                               <Lightbulb
                                 size={16}
                                 strokeWidth={1.5}
-                                className="mt-1 shrink-0 text-[var(--accent)]"
+                                className="mt-1 shrink-0 text-[var(--accent-warm)]"
                               />
                             )}
 
@@ -1362,10 +1373,10 @@ export function NotionWorkspace({
                                     key={target}
                                     type="button"
                                     onClick={() => handleWikilinkClick(target)}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-medium border transition-colors cursor-pointer ${
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-medium transition-colors cursor-pointer ${
                                       resolved
-                                        ? 'bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent-border)] hover:opacity-90'
-                                        : 'bg-[var(--bg-raised)] text-[var(--text-secondary)] border-[var(--border-hairline)] hover:border-[var(--border-strong)]'
+                                        ? 'bg-[var(--accent-soft)] text-[var(--accent)] hover:opacity-90'
+                                        : 'bg-[var(--bg-raised)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                                     }`}
                                     title={
                                       localMatch
@@ -1390,7 +1401,7 @@ export function NotionWorkspace({
                         </div>
 
                         {/* Subtle Block Controls */}
-                        <div className="flex items-center gap-0.5 pt-1 opacity-70 sm:opacity-35 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity shrink-0">
+                        <div className="flex items-center gap-0.5 pt-1 opacity-70 sm:opacity-30 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity shrink-0">
                           <select
                             aria-label="Blocktyp wechseln"
                             value={block.type}
@@ -1401,7 +1412,7 @@ export function NotionWorkspace({
                                 checked: nextType === 'todo' ? Boolean(block.checked) : undefined,
                               });
                             }}
-                            className="h-7 px-1.5 rounded-md bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[11.5px] font-medium text-[var(--text-secondary)] cursor-pointer"
+                            className="h-7 px-1.5 rounded-md bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[11.5px] font-medium text-[var(--text-secondary)] cursor-pointer"
                           >
                             {(Object.keys(BLOCK_META) as BlockType[]).map((bt) => (
                               <option
@@ -1468,7 +1479,7 @@ export function NotionWorkspace({
                     key={bt}
                     type="button"
                     onClick={() => handleAppendBlock(bt)}
-                    className="btn-ghost h-8 px-2.5 text-[12.5px] border border-[var(--border-hairline)] hover:border-[var(--border-strong)]"
+                    className="btn-ghost h-8 px-2.5 text-[12.5px]"
                   >
                     <BlockTypeIcon type={bt} size={14} />
                     {BLOCK_META[bt].label}
@@ -1476,12 +1487,12 @@ export function NotionWorkspace({
                 ))}
               </div>
 
-              {/* Related Links & [[Wikilinks]] Strip */}
-              <div className="surface-raised p-3.5 space-y-2.5">
+              {/* Related Links & [[Wikilinks]] Strip (flat hairline footer) */}
+              <div className="pt-4 border-t border-[var(--border-hairline)] space-y-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--text-primary)]">
                     <Link2 size={14} strokeWidth={1.5} className="text-[var(--accent)]" />
-                    Verknüpfte Seiten ([[Wikilinks]])
+                    Verknüpfte Seiten
                   </span>
                   <span className="text-[12px] text-[var(--text-muted)]">
                     Schreibe [[Seitentitel]] in einen Block, um Seiten oder Obsidian-Notizen zu verknüpfen.
@@ -1506,7 +1517,7 @@ export function NotionWorkspace({
                           key={`out-${target}`}
                           type="button"
                           onClick={() => handleWikilinkClick(target)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12.5px] font-medium bg-[var(--bg-card)] border border-[var(--border-hairline)] hover:border-[var(--accent-border)] text-[var(--text-primary)] cursor-pointer transition-colors"
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12.5px] font-medium bg-[var(--bg-page)] hover:bg-[var(--accent-soft)] text-[var(--text-primary)] cursor-pointer transition-colors"
                         >
                           <Link2 size={12} strokeWidth={1.5} className="text-[var(--accent)]" />
                           <span>{target}</span>
@@ -1525,7 +1536,7 @@ export function NotionWorkspace({
                           setSelectedNoteId(sourceNote.id);
                           setPreviewObsidianNote(null);
                         }}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12.5px] bg-[var(--bg-card)] border border-[var(--border-hairline)] hover:border-[var(--border-strong)] text-[var(--text-secondary)] cursor-pointer transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12.5px] bg-[var(--bg-page)] hover:bg-[var(--bg-raised)] text-[var(--text-secondary)] cursor-pointer transition-colors"
                       >
                         <span>Verlinkt von: {sourceNote.title}</span>
                       </button>

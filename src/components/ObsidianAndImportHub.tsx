@@ -17,6 +17,7 @@ import {
   Layers,
   Link2,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
@@ -33,6 +34,38 @@ import {
   StudyNotePage,
   SubjectCourse,
 } from '../types';
+import { checkLocalBridge } from '../services/providers';
+
+interface FsFileHandleLike {
+  kind: 'file';
+  name: string;
+  getFile(): Promise<File>;
+}
+
+interface FsDirectoryHandleLike {
+  kind: 'directory';
+  name: string;
+  values(): AsyncIterable<FsFileHandleLike | FsDirectoryHandleLike>;
+}
+
+async function collectMarkdownFromDirectory(
+  dirHandle: FsDirectoryHandleLike,
+  prefix = ''
+): Promise<Array<{ file: File; relPath: string }>> {
+  const results: Array<{ file: File; relPath: string }> = [];
+  for await (const entry of dirHandle.values()) {
+    if (entry.name.startsWith('.')) continue;
+    const nextPath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.kind === 'directory') {
+      const nested = await collectMarkdownFromDirectory(entry, nextPath);
+      results.push(...nested);
+    } else if (entry.kind === 'file' && /\.(md|markdown)$/i.test(entry.name)) {
+      const file = await entry.getFile();
+      results.push({ file, relPath: nextPath });
+    }
+  }
+  return results;
+}
 
 export interface ObsidianAndImportHubProps {
   state: OpenStudyState;
@@ -47,7 +80,7 @@ export interface ObsidianAndImportHubProps {
 
 type HubTab = 'obsidian' | 'school' | 'notion';
 
-const COURSE_COLORS = ['#0f766e', '#1d4ed8', '#b45309', '#15803d', '#5e554a'];
+const COURSE_COLORS = ['#0e4d48', '#d96b27', '#2a6e66', '#1f6d4c', '#7c634a'];
 
 const SAMPLE_ICS = `BEGIN:VCALENDAR
 VERSION:2.0
@@ -70,7 +103,7 @@ END:VEVENT
 END:VCALENDAR`;
 
 const SAMPLE_SYLLABUS = `# Mechanik & Energieerhaltung
-- Gleichförmige und gleichmäßig beschleunigte Bewegung beschreiben
+- Gleichförmige und gleichmässig beschleunigte Bewegung beschreiben
 - Newtonsche Gesetze auf Alltagsbeispiele anwenden
 - Kinetische und potenzielle Energie berechnen
 
@@ -466,6 +499,8 @@ export function ObsidianAndImportHub({
   const [copiedPaths, setCopiedPaths] = useState<Record<string, boolean>>({});
   const [obsidianStatus, setObsidianStatus] = useState<string | null>(null);
   const [loadingVault, setLoadingVault] = useState(false);
+  const [vaultFolderName, setVaultFolderName] = useState<string | null>(null);
+  const [bridgeStatus, setBridgeStatus] = useState<'idle' | 'checking' | 'online' | 'offline'>('idle');
 
   // --- Tab 2: School Import state ---
   const icsFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -540,60 +575,111 @@ export function ObsidianAndImportHub({
   );
 
   // --- Handlers: Tab 1 (Obsidian) ---
+  const processObsidianEntries = async (
+    entries: Array<{ file: File; relPath: string }>,
+    sourceLabel?: string
+  ) => {
+    if (entries.length === 0) {
+      setObsidianStatus(
+        'Im gewählten Ordner wurden keine Markdown-Dateien (.md) gefunden.'
+      );
+      return;
+    }
+
+    const existingSelection = new Map(
+      state.obsidianNotes.map((n) => [n.path, n.selectedForContext])
+    );
+
+    const parsedNotes: ObsidianNote[] = [];
+    for (let i = 0; i < entries.length; i += 1) {
+      const { file, relPath } = entries[i];
+      const content = await file.text();
+      const title = extractTitleFromMarkdown(content, file.name);
+      const excerpt = buildExcerpt(content);
+      const wikilinks = extractWikilinks(content);
+      const previouslySelected = existingSelection.get(relPath);
+
+      parsedNotes.push({
+        path: relPath,
+        title,
+        excerpt,
+        content,
+        wikilinks,
+        selectedForContext:
+          previouslySelected !== undefined ? previouslySelected : i < 3,
+      });
+    }
+
+    parsedNotes.sort((a, b) => a.title.localeCompare(b.title));
+    onSetObsidianNotes(parsedNotes);
+    setObsidianStatus(
+      `${parsedNotes.length} Markdown-Dateien${sourceLabel ? ` aus «${sourceLabel}»` : ''} lokal geladen. Wähle unten aus, welche Notizen der Tutor als Lernkontext nutzen darf.`
+    );
+  };
+
   const handleObsidianFilesSelected = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     setLoadingVault(true);
     setObsidianStatus(null);
 
     try {
-      const existingSelection = new Map(
-        state.obsidianNotes.map((n) => [n.path, n.selectedForContext])
-      );
+      const entries = Array.from(fileList)
+        .filter((file) => {
+          const relPath = (file.webkitRelativePath || file.name).replace(/\\/g, '/');
+          if (!/\.(md|markdown)$/i.test(file.name)) return false;
+          if (relPath.split('/').some((seg) => seg.startsWith('.'))) return false;
+          return true;
+        })
+        .map((file) => ({
+          file,
+          relPath: (file.webkitRelativePath || file.name).replace(/\\/g, '/'),
+        }));
 
-      const mdFiles = Array.from(fileList).filter((file) => {
-        const relPath = (file.webkitRelativePath || file.name).replace(/\\/g, '/');
-        if (!/\.md$/i.test(file.name)) return false;
-        // Ignore hidden Obsidian config or trash folders
-        if (relPath.split('/').some((seg) => seg.startsWith('.'))) return false;
-        return true;
-      });
+      const firstRoot = entries[0]?.relPath.includes('/')
+        ? entries[0].relPath.split('/')[0]
+        : undefined;
+      if (firstRoot) setVaultFolderName(firstRoot);
 
-      if (mdFiles.length === 0) {
-        setObsidianStatus(
-          'Im gewählten Ordner wurden keine Markdown-Dateien (.md) gefunden.'
-        );
-        return;
-      }
-
-      const parsedNotes: ObsidianNote[] = [];
-      for (let i = 0; i < mdFiles.length; i += 1) {
-        const file = mdFiles[i];
-        const content = await file.text();
-        const relPath = (file.webkitRelativePath || file.name).replace(/\\/g, '/');
-        const title = extractTitleFromMarkdown(content, file.name);
-        const excerpt = buildExcerpt(content);
-        const wikilinks = extractWikilinks(content);
-        const previouslySelected = existingSelection.get(relPath);
-
-        parsedNotes.push({
-          path: relPath,
-          title,
-          excerpt,
-          content,
-          wikilinks,
-          selectedForContext:
-            previouslySelected !== undefined ? previouslySelected : i < 3,
-        });
-      }
-
-      parsedNotes.sort((a, b) => a.title.localeCompare(b.title));
-      onSetObsidianNotes(parsedNotes);
-      setObsidianStatus(
-        `${parsedNotes.length} Markdown-Dateien lokal geladen. Wähle per Schalter aus, welche Notizen der KI-Tutor als Kontext nutzen darf.`
-      );
+      await processObsidianEntries(entries, firstRoot);
     } finally {
       setLoadingVault(false);
     }
+  };
+
+  const handlePickObsidianDirectory = async () => {
+    const picker = (
+      window as unknown as {
+        showDirectoryPicker?: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<FsDirectoryHandleLike>;
+      }
+    ).showDirectoryPicker;
+
+    if (typeof picker !== 'function') {
+      folderInputRef.current?.click();
+      return;
+    }
+
+    setLoadingVault(true);
+    setObsidianStatus(null);
+    try {
+      const dirHandle = await picker({ mode: 'read' });
+      const entries = await collectMarkdownFromDirectory(dirHandle);
+      setVaultFolderName(dirHandle.name);
+      await processObsidianEntries(entries, dirHandle.name);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return;
+      }
+      // Graceful fallback to file input when native directory picker is restricted
+      folderInputRef.current?.click();
+    } finally {
+      setLoadingVault(false);
+    }
+  };
+
+  const handleCheckLocalBridge = async () => {
+    setBridgeStatus('checking');
+    const result = await checkLocalBridge(state.provider.bridgeUrl);
+    setBridgeStatus(result.online ? 'online' : 'offline');
   };
 
   const handleSetAllObsidianContext = (selected: boolean) => {
@@ -854,40 +940,43 @@ export function ObsidianAndImportHub({
   } as React.InputHTMLAttributes<HTMLInputElement>;
 
   return (
-    <div className="animate-enter space-y-5">
+    <div className="mx-auto max-w-6xl animate-enter space-y-6 pb-10">
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-        <div className="space-y-1">
-          <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-[var(--text-primary)]">
+      <header
+        className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 border-b pb-5"
+        style={{ borderColor: 'var(--border-hairline)' }}
+      >
+        <div>
+          <p className="text-[13px] text-[var(--text-secondary)]">
+            Lokaler Obsidian-Vault, Schulkalender (.ics) und Notion-Markdown
+          </p>
+          <h1 className="font-display font-normal mt-1 text-[30px] sm:text-[34px] leading-[1.15] text-[var(--text-primary)]">
             Wissens-Hub & Import
           </h1>
-          <p className="text-[14px] text-[var(--text-secondary)] max-w-2xl">
-            Verbinde deinen lokalen Obsidian-Vault, importiere Schultermine per .ics-Kalender oder übernimm Notion-Markdown direkt in deine Wissensbasis.
-          </p>
         </div>
 
-        {/* Summary Counters */}
-        <div className="flex flex-wrap items-center gap-2 text-[12.5px] font-mono-num">
-          <span className="px-2.5 py-1 rounded-lg bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)]">
-            Obsidian: {state.obsidianNotes.length} ({activeContextCount} im KI-Kontext)
+        {/* Summary Counters (flat inline metadata) */}
+        <div className="flex flex-wrap items-center gap-2.5 text-[12.5px] font-mono-num text-[var(--text-muted)]">
+          <span>
+            Obsidian: {state.obsidianNotes.length} ({activeContextCount} aktiv)
           </span>
-          <span className="px-2.5 py-1 rounded-lg bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)]">
-            Termine: {state.schoolSchedule.length}
-          </span>
+          <span className="text-[var(--border-strong)]">·</span>
+          <span>Termine: {state.schoolSchedule.length}</span>
         </div>
-      </div>
+      </header>
 
-      {/* 3-Tab Segmented Navigation */}
+      {/* 3-Tab Editorial Underline Navigation */}
       <div
         role="tablist"
         aria-label="Import- und Integrationsbereiche"
-        className="surface-raised p-1 inline-flex flex-wrap gap-1"
+        className="flex flex-wrap gap-6 border-b"
+        style={{ borderColor: 'var(--border-hairline)' }}
       >
         {(
           [
             {
               id: 'obsidian' as const,
-              label: 'Obsidian-Vault (Lokal)',
+              label: 'Obsidian-Vault',
               icon: FolderOpen,
             },
             {
@@ -911,14 +1000,24 @@ export function ObsidianAndImportHub({
               role="tab"
               aria-selected={isActive}
               onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex items-center gap-2 h-9 px-3.5 rounded-lg text-[13.5px] font-medium transition-colors cursor-pointer ${
+              className={`relative inline-flex items-center gap-2 pb-3 text-[14px] font-medium transition-colors cursor-pointer ${
                 isActive
-                  ? 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-hairline)] shadow-[var(--shadow-sm)]'
-                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-transparent'
+                  ? 'text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
-              <Icon size={15} strokeWidth={1.5} />
+              <Icon
+                size={15}
+                strokeWidth={1.5}
+                className={isActive ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}
+              />
               {tab.label}
+              {isActive && (
+                <span
+                  className="absolute inset-x-0 -bottom-px h-[2px] rounded-full"
+                  style={{ backgroundColor: 'var(--accent)' }}
+                />
+              )}
             </button>
           );
         })}
@@ -928,31 +1027,36 @@ export function ObsidianAndImportHub({
       {/* TAB 1: OBSIDIAN-VAULT (LOKAL)                                     */}
       {/* ================================================================= */}
       {activeTab === 'obsidian' && (
-        <div className="space-y-4">
-          {/* Privacy Banner */}
-          <div className="surface-raised px-4 py-3 flex items-start gap-3">
+        <div className="space-y-5">
+          {/* Calm Editorial Privacy Note */}
+          <div className="border-l-2 border-[var(--positive)] pl-3.5 py-0.5 flex items-start gap-2.5">
             <ShieldCheck
-              size={18}
+              size={16}
               strokeWidth={1.5}
               className="mt-0.5 shrink-0 text-[var(--positive)]"
             />
-            <div className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
+            <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
               <span className="font-medium text-[var(--text-primary)]">
-                Dateien bleiben lokal auf deinem Gerät.
+                Deine Dateien bleiben auf diesem Gerät.
               </span>{' '}
-              Dein Browser liest ausgewählte Markdown-Dateien direkt im lokalen Speicher. Nur die Notizen, die du explizit als KI-Kontext aktivierst, werden dem Lerntutor als Lernkontext mitgegeben.
-            </div>
+              Der Browser liest gewählte Markdown-Dateien direkt im lokalen Speicher. Nur Notizen, die du gezielt freigibst, dienen dem Tutor als Lernkontext.
+            </p>
           </div>
 
           {/* Vault Picker Card */}
-          <div className="surface-card p-5 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="space-y-0.5">
-                <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
+          <div className="surface-card p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="space-y-1">
+                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)]">
                   Lokalen Obsidian-Ordner verbinden
                 </h2>
                 <p className="text-[13.5px] text-[var(--text-secondary)]">
-                  Wähle einen beliebigen Vault- oder Unterordner mit .md-Dateien. [[Wikilinks]] und Textauszüge werden sofort indiziert.
+                  Wähle direkt über den Ordner-Dialog deinen Vault oder einen Fachordner. [[Wikilinks]] und Textauszüge werden unmittelbar indiziert.
+                  {vaultFolderName && (
+                    <span className="ml-1.5 font-mono-num text-[12px] text-[var(--accent)]">
+                      · {vaultFolderName}
+                    </span>
+                  )}
                 </p>
               </div>
 
@@ -982,12 +1086,12 @@ export function ObsidianAndImportHub({
 
                 <button
                   type="button"
-                  onClick={() => folderInputRef.current?.click()}
+                  onClick={() => void handlePickObsidianDirectory()}
                   disabled={loadingVault}
                   className="btn-accent"
                 >
                   <FolderOpen size={15} strokeWidth={1.5} />
-                  {loadingVault ? 'Lese Dateien...' : 'Vault-Ordner wählen'}
+                  {loadingVault ? 'Lese Ordner...' : 'Vault-Ordner wählen'}
                 </button>
                 <button
                   type="button"
@@ -1002,12 +1106,12 @@ export function ObsidianAndImportHub({
             </div>
 
             {obsidianStatus && (
-              <div className="px-3.5 py-2.5 rounded-lg bg-[var(--accent-soft)] border border-[var(--accent-border)] text-[13px] text-[var(--text-primary)] flex items-center justify-between gap-2">
+              <div className="border-l-2 border-[var(--accent)] pl-3.5 py-1 text-[13px] text-[var(--text-primary)] flex items-center justify-between gap-2">
                 <span>{obsidianStatus}</span>
                 <button
                   type="button"
                   onClick={() => setObsidianStatus(null)}
-                  aria-label="Status schließen"
+                  aria-label="Status schliessen"
                   className="p-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
                 >
                   <X size={14} strokeWidth={1.5} />
@@ -1017,21 +1121,21 @@ export function ObsidianAndImportHub({
 
             {/* Loaded Obsidian Notes Explorer */}
             {state.obsidianNotes.length === 0 ? (
-              <div className="surface-raised p-8 text-center space-y-2">
+              <div className="border-t border-[var(--border-hairline)] pt-8 pb-4 text-center space-y-2">
                 <FolderOpen
                   size={22}
                   strokeWidth={1.5}
                   className="mx-auto text-[var(--text-muted)]"
                 />
-                <p className="text-[14px] font-medium text-[var(--text-primary)]">
-                  Noch kein Obsidian-Vault geladen
+                <p className="font-display font-normal text-[19px] text-[var(--text-primary)]">
+                  Noch kein Obsidian-Vault verbunden
                 </p>
-                <p className="text-[13px] text-[var(--text-secondary)] max-w-md mx-auto">
-                  Klicke oben auf «Vault-Ordner wählen», um deine lokalen Markdown-Notizen durchsuchbar zu machen und gezielt als KI-Kontext freizugeben.
+                <p className="text-[13.5px] text-[var(--text-secondary)] max-w-md mx-auto">
+                  Wähle oben deinen lokalen Vault-Ordner aus, um deine Markdown-Notizen zu durchsuchen und gezielt für den Tutor freizugeben.
                 </p>
               </div>
             ) : (
-              <div className="space-y-3 pt-2 border-t border-[var(--border-hairline)]">
+              <div className="space-y-4 pt-4 border-t border-[var(--border-hairline)]">
                 {/* Search, Filter & Destination Course Controls */}
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
                   <div className="flex flex-wrap items-center gap-2 flex-1">
@@ -1046,7 +1150,7 @@ export function ObsidianAndImportHub({
                         value={obsidianSearch}
                         onChange={(e) => setObsidianSearch(e.target.value)}
                         placeholder="Nach Titel, Pfad oder [[Wikilink]] filtern..."
-                        className="w-full h-9 pl-9 pr-8 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                        className="w-full h-9 pl-9 pr-8 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                       />
                       {obsidianSearch && (
                         <button
@@ -1063,13 +1167,13 @@ export function ObsidianAndImportHub({
                     <button
                       type="button"
                       onClick={() => setOnlySelectedContext((v) => !v)}
-                      className={`h-9 px-3 rounded-lg text-[13px] font-medium border transition-colors cursor-pointer ${
+                      className={`h-9 px-3.5 rounded-full text-[13px] font-medium border transition-colors cursor-pointer ${
                         onlySelectedContext
                           ? 'bg-[var(--accent-soft)] text-[var(--accent)] border-[var(--accent-border)]'
-                          : 'bg-[var(--bg-raised)] text-[var(--text-secondary)] border-[var(--border-hairline)] hover:text-[var(--text-primary)]'
+                          : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-hairline)] hover:text-[var(--text-primary)]'
                       }`}
                     >
-                      Nur KI-Kontext ({activeContextCount})
+                      Nur Lernkontext ({activeContextCount})
                     </button>
                   </div>
 
@@ -1079,7 +1183,7 @@ export function ObsidianAndImportHub({
                       <select
                         value={resolvedObsidianCourseId}
                         onChange={(e) => setObsidianTargetCourseId(e.target.value)}
-                        className="h-8 px-2 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[12.5px] text-[var(--text-primary)]"
+                        className="h-8 px-2 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[12.5px] text-[var(--text-primary)]"
                       >
                         {state.courses.map((c) => (
                           <option
@@ -1114,6 +1218,7 @@ export function ObsidianAndImportHub({
                       type="button"
                       onClick={() => {
                         onSetObsidianNotes([]);
+                        setVaultFolderName(null);
                         setObsidianStatus('Lokale Obsidian-Liste geleert.');
                       }}
                       className="btn-ghost h-8 px-2 text-[12.5px] hover:text-[var(--negative)]"
@@ -1124,8 +1229,8 @@ export function ObsidianAndImportHub({
                   </div>
                 </div>
 
-                {/* Notes List */}
-                <div className="space-y-2 max-h-[520px] overflow-y-auto pr-0.5">
+                {/* Notes List (flat hairline rows) */}
+                <div className="divide-y divide-[var(--border-hairline)] max-h-[520px] overflow-y-auto pr-1">
                   {filteredObsidianNotes.length === 0 ? (
                     <p className="text-[13.5px] text-[var(--text-muted)] py-6 text-center">
                       Keine Notizen entsprechen dem aktuellen Filter.
@@ -1138,30 +1243,26 @@ export function ObsidianAndImportHub({
                       return (
                         <div
                           key={note.path}
-                          className={`rounded-xl border p-3.5 transition-colors space-y-2.5 ${
-                            note.selectedForContext
-                              ? 'bg-[var(--accent-soft)]/50 border-[var(--accent-border)]'
-                              : 'bg-[var(--bg-page)]/50 border-[var(--border-hairline)]'
-                          }`}
+                          className="py-4 first:pt-2 last:pb-1 space-y-2.5"
                         >
                           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                             <div className="space-y-1 min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2.5">
                                 <button
                                   type="button"
                                   onClick={() => onToggleObsidianContext(note.path)}
-                                  className={`inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[12px] font-medium border transition-colors cursor-pointer ${
+                                  className={`inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[12px] font-medium border transition-colors cursor-pointer ${
                                     note.selectedForContext
                                       ? 'bg-[var(--accent)] text-[var(--accent-ink)] border-transparent'
-                                      : 'bg-[var(--bg-card)] text-[var(--text-secondary)] border-[var(--border-strong)] hover:border-[var(--accent)]'
+                                      : 'bg-transparent text-[var(--text-secondary)] border-[var(--border-strong)] hover:border-[var(--accent)]'
                                   }`}
                                 >
-                                  <Check size={12} strokeWidth={2} />
+                                  <Check size={11} strokeWidth={2} />
                                   {note.selectedForContext
-                                    ? 'KI-Kontext aktiv'
-                                    : 'Als KI-Kontext teilen'}
+                                    ? 'Im Lernkontext'
+                                    : 'Als Kontext teilen'}
                                 </button>
-                                <span className="text-[14.5px] font-semibold text-[var(--text-primary)] truncate">
+                                <span className="text-[15px] font-medium text-[var(--text-primary)] truncate">
                                   {note.title}
                                 </span>
                               </div>
@@ -1177,7 +1278,7 @@ export function ObsidianAndImportHub({
                               <button
                                 type="button"
                                 onClick={() => handleCopyObsidianNoteToWorkspace(note)}
-                                className="btn-secondary h-8 px-2.5 text-[12.5px]"
+                                className="btn-secondary h-8 px-3 text-[12.5px]"
                               >
                                 {isCopied ? (
                                   <>
@@ -1187,7 +1288,7 @@ export function ObsidianAndImportHub({
                                 ) : (
                                   <>
                                     <CopyPlus size={14} strokeWidth={1.5} />
-                                    In eigene Notizen kopieren
+                                    In Notizen kopieren
                                   </>
                                 )}
                               </button>
@@ -1220,7 +1321,7 @@ export function ObsidianAndImportHub({
                                   key={wl}
                                   type="button"
                                   onClick={() => setObsidianSearch(wl)}
-                                  className="px-2 py-0.5 rounded text-[11.5px] bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:border-[var(--accent-border)] hover:text-[var(--accent)] cursor-pointer"
+                                  className="px-2 py-0.5 rounded-full text-[11.5px] bg-[var(--bg-page)] text-[var(--text-secondary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent)] cursor-pointer transition-colors"
                                 >
                                   [[{wl}]]
                                 </button>
@@ -1234,7 +1335,7 @@ export function ObsidianAndImportHub({
                           )}
 
                           {isExpanded && (
-                            <pre className="surface-raised p-3 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-[var(--text-primary)] font-sans max-h-64 overflow-y-auto">
+                            <pre className="border-l-2 border-[var(--border-strong)] pl-3.5 py-1 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-[var(--text-primary)] font-sans max-h-64 overflow-y-auto">
                               {note.content}
                             </pre>
                           )}
@@ -1245,43 +1346,70 @@ export function ObsidianAndImportHub({
                 </div>
               </div>
             )}
+
+            {/* Understated optional local bridge status check */}
+            <div
+              className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 text-[12.5px]"
+              style={{ borderColor: 'var(--border-hairline)', color: 'var(--text-muted)' }}
+            >
+              <span>
+                Optional: Lokale Desktop-Bridge für automatische Ordnersynchronisation
+                {bridgeStatus === 'online' && (
+                  <span className="ml-2 font-medium text-[var(--positive)]">· Verbunden</span>
+                )}
+                {bridgeStatus === 'offline' && (
+                  <span className="ml-2 text-[var(--text-secondary)]">· Nicht aktiv</span>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleCheckLocalBridge()}
+                disabled={bridgeStatus === 'checking'}
+                className="btn-ghost h-7 px-2 text-[12px]"
+              >
+                <RefreshCw
+                  size={12}
+                  strokeWidth={1.5}
+                  className={bridgeStatus === 'checking' ? 'animate-spin' : ''}
+                />
+                <span>{bridgeStatus === 'checking' ? 'Prüfe...' : 'Bridge prüfen'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* ================================================================= */}
-      {/* TAB 2: SCHUL-IMPORT (KALENDER .ICS & SMART STOFF-IMPORTER)        */}
+      {/* TAB 2: SCHUL-IMPORT (KALENDER .ICS & STOFF-IMPORT)                */}
       {/* ================================================================= */}
       {activeTab === 'school' && (
-        <div className="space-y-5">
-          {/* Universal Compatibility Info Banner */}
-          <div className="surface-raised px-4 py-3 flex items-start gap-3">
+        <div className="space-y-6">
+          {/* Calm Editorial Info Note */}
+          <div className="border-l-2 border-[var(--accent)] pl-3.5 py-0.5 flex items-start gap-2.5">
             <Info
-              size={18}
+              size={16}
               strokeWidth={1.5}
               className="mt-0.5 shrink-0 text-[var(--accent)]"
             />
-            <div className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
+            <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
               <span className="font-medium text-[var(--text-primary)]">
-                Universell für jede Schule und Hochschule:
+                Offen für jede Schule und Hochschule:
               </span>{' '}
-              Kein Schul-Login, keine IT-Admin-Freigabe und keine API-Schnittstelle nötig. Exportiere deinen Stunden- oder Prüfungsplan einfach als Standard-.ics-Kalender oder füge Lernziele, Skripte und PDF-Textauszüge per Copy-Paste ein.
-            </div>
+              Kein Schul-Login und keine Admin-Freigabe nötig. Exportiere deinen Stunden- oder Prüfungsplan als .ics-Kalender oder füge Lernziele, Skripte und Textauszüge direkt ein.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
             {/* Left Card: .ics Calendar Import */}
-            <div className="surface-card p-5 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-0.5">
-                  <h2 className="text-[16px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-2">
-                    <Calendar size={16} strokeWidth={1.5} className="text-[var(--accent)]" />
-                    .ics Kalender-Import
-                  </h2>
-                  <p className="text-[13px] text-[var(--text-secondary)]">
-                    Lade eine .ics-Datei hoch oder füge iCal-Text ein. VEVENT-Einträge (SUMMARY, DTSTART) werden lokal ausgewertet.
-                  </p>
-                </div>
+            <div className="surface-card p-6 space-y-4">
+              <div className="space-y-1">
+                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)] inline-flex items-center gap-2">
+                  <Calendar size={17} strokeWidth={1.5} className="text-[var(--accent)]" />
+                  .ics Kalender-Import
+                </h2>
+                <p className="text-[13.5px] text-[var(--text-secondary)]">
+                  Lade eine .ics-Datei hoch oder füge iCal-Text ein. Alle Termine werden lokal im Browser ausgelesen.
+                </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -1325,7 +1453,7 @@ export function ObsidianAndImportHub({
                   value={icsRawText}
                   onChange={(e) => setIcsRawText(e.target.value)}
                   placeholder="BEGIN:VCALENDAR&#10;BEGIN:VEVENT&#10;DTSTART;VALUE=DATE:20261215&#10;SUMMARY:Biologie Test: Genetik&#10;END:VEVENT&#10;END:VCALENDAR"
-                  className="w-full p-3 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] font-mono-num text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                  className="w-full p-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] font-mono-num text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
                 {icsRawText.trim() && parsedIcsEvents.length === 0 && (
                   <button
@@ -1339,13 +1467,13 @@ export function ObsidianAndImportHub({
               </div>
 
               {icsMessage && (
-                <p className="text-[13px] px-3 py-2 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[var(--text-primary)]">
+                <p className="border-l-2 border-[var(--accent)] pl-3 py-0.5 text-[13px] text-[var(--text-primary)]">
                   {icsMessage}
                 </p>
               )}
 
               {parsedIcsEvents.length > 0 && (
-                <div className="space-y-2.5 pt-2 border-t border-[var(--border-hairline)]">
+                <div className="space-y-2.5 pt-3 border-t border-[var(--border-hairline)]">
                   <div className="flex items-center justify-between">
                     <span className="text-[13px] font-medium text-[var(--text-primary)]">
                       Erkannte Termine ({parsedIcsEvents.filter((e) => e.selected).length}/
@@ -1361,11 +1489,11 @@ export function ObsidianAndImportHub({
                     </button>
                   </div>
 
-                  <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                  <div className="divide-y divide-[var(--border-hairline)] max-h-56 overflow-y-auto">
                     {parsedIcsEvents.map((ev) => (
                       <label
                         key={ev.uid}
-                        className="flex items-start gap-2.5 p-2.5 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] cursor-pointer"
+                        className="flex items-start gap-2.5 py-2.5 cursor-pointer"
                       >
                         <input
                           type="checkbox"
@@ -1396,25 +1524,23 @@ export function ObsidianAndImportHub({
               )}
             </div>
 
-            {/* Right Card: Smart Stoff-Importer */}
+            {/* Right Card: Stoff- & Lehrplan-Import */}
             <form
               onSubmit={handleRunSmartSyllabusImport}
-              className="surface-card p-5 space-y-4"
+              className="surface-card p-6 space-y-4"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-0.5">
-                  <h2 className="text-[16px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-2">
-                    <GraduationCap
-                      size={16}
-                      strokeWidth={1.5}
-                      className="text-[var(--accent)]"
-                    />
-                    Smart Stoff-Importer (Text, PDF-Auszug, Skript)
-                  </h2>
-                  <p className="text-[13px] text-[var(--text-secondary)]">
-                    Erzeugt sofort offline einen neuen Kurs mit Lernzielen, strukturierter Notizseite und Starter-Karteikarten.
-                  </p>
-                </div>
+              <div className="space-y-1">
+                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)] inline-flex items-center gap-2">
+                  <GraduationCap
+                    size={18}
+                    strokeWidth={1.5}
+                    className="text-[var(--accent)]"
+                  />
+                  Stoff- & Lehrplan-Import
+                </h2>
+                <p className="text-[13.5px] text-[var(--text-secondary)]">
+                  Erzeugt aus Skripten oder PDF-Auszügen direkt einen Kurs mit Lernzielen, strukturierter Notizseite und Starter-Karten.
+                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1431,7 +1557,7 @@ export function ObsidianAndImportHub({
                     value={importCourseTitle}
                     onChange={(e) => setImportCourseTitle(e.target.value)}
                     placeholder="z. B. Physik — Mechanik & Energie"
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                   />
                 </div>
 
@@ -1448,7 +1574,7 @@ export function ObsidianAndImportHub({
                     onChange={(e) =>
                       setImportCategory(e.target.value as SubjectCourse['category'])
                     }
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
+                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
                   >
                     <option
                       value="science"
@@ -1501,7 +1627,7 @@ export function ObsidianAndImportHub({
                     type="date"
                     value={importExamDate}
                     onChange={(e) => setImportExamDate(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
+                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
                   />
                 </div>
               </div>
@@ -1553,13 +1679,13 @@ export function ObsidianAndImportHub({
                   value={syllabusText}
                   onChange={(e) => setSyllabusText(e.target.value)}
                   placeholder="Lernziele als Aufzählung, Definitionen im Format «Begriff: Erklärung» oder Text aus einem PDF-Arbeitsblatt einfügen..."
-                  className="w-full p-3 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[13.5px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                  className="w-full p-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] leading-relaxed text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                 />
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[12px] text-[var(--text-muted)]">
-                  Tipp: «Begriff: Erklärung» wird automatisch als Karteikarte erkannt.
+                  Hinweis: «Begriff: Erklärung» wird automatisch als Karteikarte erkannt.
                 </span>
                 <button type="submit" className="btn-accent">
                   <Layers size={15} strokeWidth={1.5} />
@@ -1568,12 +1694,12 @@ export function ObsidianAndImportHub({
               </div>
 
               {syllabusResult && (
-                <div className="px-3.5 py-2.5 rounded-lg bg-[var(--positive-soft)] border border-[var(--positive)] text-[13px] text-[var(--positive)] flex items-center justify-between gap-2">
+                <div className="border-l-2 border-[var(--positive)] pl-3 py-1 text-[13px] text-[var(--positive)] flex items-center justify-between gap-2">
                   <span>{syllabusResult}</span>
                   <button
                     type="button"
                     onClick={() => setSyllabusResult(null)}
-                    aria-label="Meldung schließen"
+                    aria-label="Meldung schliessen"
                     className="p-0.5 cursor-pointer"
                   >
                     <X size={14} strokeWidth={1.5} />
@@ -1584,11 +1710,14 @@ export function ObsidianAndImportHub({
           </div>
 
           {/* Upcoming School Schedule Timeline */}
-          <div className="surface-card p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="surface-card p-6 space-y-4">
+            <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--border-hairline)] pb-4">
               <div>
-                <h2 className="text-[16px] font-semibold text-[var(--text-primary)]">
-                  Anstehende Prüfungen & Termine ({sortedSchedule.length})
+                <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)]">
+                  Anstehende Prüfungen & Termine{' '}
+                  <span className="font-mono-num text-[14px] text-[var(--text-muted)]">
+                    ({sortedSchedule.length})
+                  </span>
                 </h2>
                 <p className="text-[13px] text-[var(--text-secondary)]">
                   Chronologische Übersicht aus .ics-Kalendern, Stoff-Importen und manuellen Einträgen.
@@ -1607,7 +1736,7 @@ export function ObsidianAndImportHub({
             {showManualEventForm && (
               <form
                 onSubmit={handleAddManualScheduleItem}
-                className="surface-raised p-3.5 grid grid-cols-1 sm:grid-cols-[1fr_180px_160px_auto] gap-2.5 items-end"
+                className="pb-4 border-b border-[var(--border-hairline)] grid grid-cols-1 sm:grid-cols-[1fr_180px_160px_auto] gap-2.5 items-end"
               >
                 <div className="space-y-1">
                   <label className="text-[12px] text-[var(--text-secondary)]">
@@ -1619,7 +1748,7 @@ export function ObsidianAndImportHub({
                     value={manualTitle}
                     onChange={(e) => setManualTitle(e.target.value)}
                     placeholder="z. B. Chemie Klausur: Säuren & Basen"
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
+                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1631,7 +1760,7 @@ export function ObsidianAndImportHub({
                     value={manualCourse}
                     onChange={(e) => setManualCourse(e.target.value)}
                     placeholder="z. B. Chemie"
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
+                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] text-[var(--text-primary)]"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1643,7 +1772,7 @@ export function ObsidianAndImportHub({
                     required
                     value={manualDate}
                     onChange={(e) => setManualDate(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
+                    className="w-full h-9 px-3 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13.5px] font-mono-num text-[var(--text-primary)]"
                   />
                 </div>
                 <button type="submit" className="btn-accent h-9 px-3.5 text-[13px]">
@@ -1687,17 +1816,17 @@ export function ObsidianAndImportHub({
                       </div>
 
                       <span
-                        className="self-start sm:self-center shrink-0 px-2.5 py-0.5 rounded-md text-[12px] font-medium font-mono-num"
+                        className="self-start sm:self-center shrink-0 px-2.5 py-0.5 rounded-full text-[12px] font-medium font-mono-num"
                         style={{
                           backgroundColor:
                             countdown.tone === 'warning'
-                              ? 'var(--warning-soft)'
+                              ? 'var(--accent-warm-soft)'
                               : countdown.tone === 'accent'
                                 ? 'var(--accent-soft)'
                                 : 'var(--bg-raised)',
                           color:
                             countdown.tone === 'warning'
-                              ? 'var(--warning)'
+                              ? 'var(--accent-warm)'
                               : countdown.tone === 'accent'
                                 ? 'var(--accent)'
                                 : 'var(--text-muted)',
@@ -1718,12 +1847,12 @@ export function ObsidianAndImportHub({
       {/* TAB 3: NOTION-VERBINDUNG & MARKDOWN-IMPORT                        */}
       {/* ================================================================= */}
       {activeTab === 'notion' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-          {/* Left Card: Instant Notion Markdown Export Dropzone */}
-          <div className="surface-card p-5 space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          {/* Left Card: Notion Markdown Export Dropzone */}
+          <div className="surface-card p-6 space-y-4">
             <div className="space-y-1">
-              <h2 className="text-[16px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-2">
-                <BookOpen size={16} strokeWidth={1.5} className="text-[var(--accent)]" />
+              <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)] inline-flex items-center gap-2">
+                <BookOpen size={17} strokeWidth={1.5} className="text-[var(--accent)]" />
                 Notion Markdown-Export importieren
               </h2>
               <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
@@ -1737,7 +1866,7 @@ export function ObsidianAndImportHub({
                 <select
                   value={resolvedNotionCourseId}
                   onChange={(e) => setNotionTargetCourseId(e.target.value)}
-                  className="h-8 px-2.5 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] text-[13px] text-[var(--text-primary)]"
+                  className="h-8 px-2.5 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] text-[13px] text-[var(--text-primary)]"
                 >
                   {state.courses.map((c) => (
                     <option
@@ -1793,7 +1922,7 @@ export function ObsidianAndImportHub({
               className={`rounded-xl border border-dashed p-7 text-center space-y-2.5 transition-colors ${
                 notionDragActive
                   ? 'border-[var(--accent)] bg-[var(--accent-soft)]'
-                  : 'border-[var(--border-strong)] bg-[var(--bg-raised)]/60'
+                  : 'border-[var(--border-strong)] bg-[var(--bg-page)]/60'
               }`}
             >
               <FileDown
@@ -1820,15 +1949,15 @@ export function ObsidianAndImportHub({
             </div>
 
             {notionImportLog.length > 0 && (
-              <div className="space-y-2 pt-2 border-t border-[var(--border-hairline)]">
-                <div className="text-[13px] font-medium text-[var(--text-primary)]">
+              <div className="space-y-2 pt-3 border-t border-[var(--border-hairline)]">
+                <div className="text-[12.5px] font-medium text-[var(--text-muted)]">
                   Zuletzt importiert
                 </div>
-                <div className="space-y-1.5">
+                <div className="divide-y divide-[var(--border-hairline)]">
                   {notionImportLog.map((entry, idx) => (
                     <div
                       key={`${entry.title}-${idx}`}
-                      className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[var(--positive-soft)] text-[13px]"
+                      className="flex items-center justify-between gap-2 py-2 text-[13px]"
                     >
                       <span className="inline-flex items-center gap-2 text-[var(--text-primary)] font-medium truncate">
                         <FileText
@@ -1850,11 +1979,11 @@ export function ObsidianAndImportHub({
           </div>
 
           {/* Right Card: Optional Official Notion Integration Token */}
-          <div className="surface-card p-5 space-y-4">
+          <div className="surface-card p-6 space-y-5">
             <div className="space-y-1">
-              <h2 className="text-[16px] font-semibold text-[var(--text-primary)] inline-flex items-center gap-2">
-                <KeyRound size={16} strokeWidth={1.5} className="text-[var(--accent)]" />
-                Optionale Notion-API-Verbindung (Lokal)
+              <h2 className="font-display font-normal text-[21px] leading-snug text-[var(--text-primary)] inline-flex items-center gap-2">
+                <KeyRound size={17} strokeWidth={1.5} className="text-[var(--accent)]" />
+                Optionale Notion-API-Verbindung
               </h2>
               <p className="text-[13.5px] text-[var(--text-secondary)] leading-relaxed">
                 OpenStudy funktioniert vollständig ohne Notion-Konto. Wenn du eine eigene Notion Internal Integration nutzt, kannst du dein Token hier optional lokal hinterlegen.
@@ -1877,7 +2006,7 @@ export function ObsidianAndImportHub({
                     onChange={(e) => setNotionTokenDraft(e.target.value)}
                     placeholder="ntn_... oder secret_..."
                     autoComplete="off"
-                    className="w-full h-10 pl-3 pr-10 rounded-lg bg-[var(--bg-raised)] border border-[var(--border-hairline)] font-mono-num text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
+                    className="w-full h-10 pl-3 pr-10 rounded-lg bg-[var(--bg-page)] border border-[var(--border-hairline)] font-mono-num text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
                   />
                   <button
                     type="button"
@@ -1921,7 +2050,7 @@ export function ObsidianAndImportHub({
               )}
             </form>
 
-            <div className="surface-raised p-3.5 space-y-2 text-[13px] text-[var(--text-secondary)]">
+            <div className="border-t border-[var(--border-hairline)] pt-4 space-y-1.5 text-[13px] text-[var(--text-secondary)]">
               <div className="inline-flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
                 <ShieldCheck
                   size={15}
@@ -1931,7 +2060,7 @@ export function ObsidianAndImportHub({
                 Datenschutz-Hinweis
               </div>
               <p className="leading-relaxed">
-                Dein Token wird ausschließlich lokal im Browser-Speicher dieses Geräts gesichert. Da Browser direkte Notion-API-Anfragen per CORS blockieren, ist der Markdown-Export links der schnellste Weg ohne zusätzliche Server.
+                Dein Token wird ausschliesslich lokal im Browser-Speicher dieses Geräts gesichert. Da Browser direkte Notion-API-Anfragen per CORS blockieren, ist der Markdown-Export links der direkteste Weg ohne zusätzliche Server.
               </p>
             </div>
           </div>

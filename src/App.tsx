@@ -2,19 +2,20 @@ import React, { useMemo, useState } from 'react';
 import {
   BookOpen,
   Clock,
+  Download,
   FolderInput,
   Globe,
   GraduationCap,
   LayoutDashboard,
   Menu,
   Mic,
-  Moon,
   Settings,
-  Sun,
   X,
 } from 'lucide-react';
+import { COLOR_SCHEMES, getColorSchemeById } from './data/colorSchemes';
 import { useOpenStudyStore } from './hooks/useOpenStudyStore';
-import { MainView, StudyLanguage, TutorMode } from './types';
+import { usePwaInstall } from './hooks/usePwaInstall';
+import { ColorSchemeId, MainView, StudyLanguage, TutorMode } from './types';
 import { HomeDashboard } from './components/HomeDashboard';
 import { NotionWorkspace } from './components/NotionWorkspace';
 import { StudyTrainerView } from './components/StudyTrainerView';
@@ -31,28 +32,56 @@ const NAV_ITEMS: {
   label: string;
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
 }[] = [
-  { id: 'home', label: 'Übersicht & Lernplan', icon: LayoutDashboard },
-  { id: 'notes', label: 'Notizen (Notion-Hub)', icon: BookOpen },
-  { id: 'trainer', label: 'Karten, Quiz & Agent', icon: GraduationCap },
-  { id: 'languages', label: 'Sprachen & Grammatik', icon: Globe },
-  { id: 'focus', label: 'Fokuszeiten & Planer', icon: Clock },
-  { id: 'import', label: 'Obsidian & Schul-Import', icon: FolderInput },
+  { id: 'home', label: 'Übersicht', icon: LayoutDashboard },
+  { id: 'notes', label: 'Notizen', icon: BookOpen },
+  { id: 'trainer', label: 'Karten & Quiz', icon: GraduationCap },
+  { id: 'languages', label: 'Sprachen', icon: Globe },
+  { id: 'focus', label: 'Fokus', icon: Clock },
+  { id: 'import', label: 'Import & Sync', icon: FolderInput },
 ];
 
 const VIEW_LABELS: Record<MainView, string> = {
-  home: 'Übersicht & Lernplan',
-  notes: 'Notizen-Workspace',
-  trainer: 'Karteikarten, Quiz & Lern-Agent',
-  languages: 'Sprach- & Grammatik-Studio',
-  focus: 'Fokuszeiten & Tagesplan',
-  import: 'Obsidian, Notion & Schul-Import',
+  home: 'Übersicht',
+  notes: 'Notizen',
+  trainer: 'Karten & Quiz',
+  languages: 'Sprachen & Grammatik',
+  focus: 'Fokus & Planer',
+  import: 'Import & Sync',
 };
+
+function FocusMark() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden="true"
+      className="shrink-0"
+    >
+      <circle
+        cx="10"
+        cy="10"
+        r="7.5"
+        stroke="var(--accent)"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M10 2.5A7.5 7.5 0 0 1 17.5 10"
+        stroke="var(--accent-warm)"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+      />
+      <circle cx="10" cy="10" r="2.2" fill="var(--accent)" />
+    </svg>
+  );
+}
 
 export default function App() {
   const {
     state,
     demoMode,
-    toggleTheme,
+    setColorScheme,
     setActiveCourse,
     completeOnboarding,
     updateProvider,
@@ -74,12 +103,15 @@ export default function App() {
     resetToDemo,
   } = useOpenStudyStore();
 
+  const { canInstall, isInstalled, promptInstall } = usePwaInstall();
+
   const [view, setView] = useState<MainView>('home');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [forceOnboarding, setForceOnboarding] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveConnectionState>('idle');
+  const [hoveredSchemeId, setHoveredSchemeId] = useState<ColorSchemeId | null>(null);
 
   const activeCourse = useMemo(
     () => state.courses.find((c) => c.id === state.activeCourseId) ?? state.courses[0],
@@ -90,6 +122,11 @@ export default function App() {
     const now = Date.now();
     return state.cards.filter((c) => c.due <= now).length;
   }, [state.cards]);
+
+  const activeScheme = useMemo(
+    () => getColorSchemeById(hoveredSchemeId ?? state.colorScheme),
+    [hoveredSchemeId, state.colorScheme]
+  );
 
   const openVoiceTutor = (opts?: {
     mode?: TutorMode;
@@ -116,37 +153,33 @@ export default function App() {
     ? `${VIEW_LABELS[view]} · ${activeCourse.title}`
     : VIEW_LABELS[view];
 
-  const showOnboarding = !demoMode && (!state.onboardingDone || forceOnboarding);
-
   const sidebarContent = (
-    <div className="flex flex-col h-full p-4 justify-between">
-      <div className="space-y-6">
-        {/* Brand */}
-        <div className="flex items-center justify-between px-2 pt-1">
-          <div className="flex items-center gap-2.5">
-            <span
-              className="w-2.5 h-2.5 rounded-[3px] shrink-0"
-              style={{ backgroundColor: 'var(--accent)' }}
-            />
-            <span className="text-[16px] font-semibold tracking-[-0.01em]">OpenStudy</span>
-          </div>
-          <span className="font-mono-num text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            {demoMode ? 'Demo' : 'v1.0'}
+    <div className="flex flex-col h-full px-3.5 py-5 justify-between gap-6">
+      <div className="space-y-7">
+        {/* Editorial Brand Mark */}
+        <button
+          type="button"
+          onClick={() => navigate('home')}
+          className="flex items-center gap-2.5 px-2 pt-0.5 text-left cursor-pointer"
+        >
+          <FocusMark />
+          <span
+            className="font-display text-[19px] font-medium tracking-[-0.02em] leading-none"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            OpenStudy
           </span>
-        </div>
+        </button>
 
-        {/* Navigation */}
-        <nav className="space-y-1" aria-label="Hauptnavigation">
-          <div className="px-2 pb-1.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-            Lernbereiche
-          </div>
+        {/* Primary Navigation */}
+        <nav className="space-y-0.5" aria-label="Hauptnavigation">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = view === item.id;
-            const badge =
-              item.id === 'trainer'
+            const count =
+              item.id === 'trainer' && dueCardsCount > 0
                 ? String(dueCardsCount)
-                : item.id === 'notes'
+                : item.id === 'notes' && state.notes.length > 0
                 ? String(state.notes.length)
                 : undefined;
 
@@ -155,21 +188,41 @@ export default function App() {
                 key={item.id}
                 type="button"
                 onClick={() => navigate(item.id)}
-                className="w-full h-9 px-2.5 rounded-[8px] flex items-center justify-between gap-2 text-[14px] font-medium cursor-pointer transition-colors"
+                aria-current={active ? 'page' : undefined}
+                className="relative w-full h-9 pl-3 pr-2.5 rounded-lg flex items-center justify-between gap-2 text-[13.5px] cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/55"
                 style={{
-                  backgroundColor: active ? 'var(--bg-card)' : 'transparent',
+                  backgroundColor: active ? 'var(--accent-soft)' : undefined,
                   color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  border: active ? '1px solid var(--border-hairline)' : '1px solid transparent',
-                  boxShadow: active ? 'var(--shadow-sm)' : 'none',
+                  fontWeight: active ? 500 : 400,
                 }}
               >
+                {active && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-full"
+                    style={{ backgroundColor: 'var(--accent-warm)' }}
+                  />
+                )}
                 <span className="flex items-center gap-2.5 min-w-0">
-                  <Icon size={16} strokeWidth={1.5} />
+                  <span
+                    className="shrink-0 flex items-center"
+                    style={{ color: active ? 'var(--accent)' : 'var(--text-muted)' }}
+                  >
+                    <Icon size={15} strokeWidth={1.5} />
+                  </span>
                   <span className="truncate">{item.label}</span>
                 </span>
-                {badge && (
-                  <span className="font-mono-num text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    {badge}
+                {count && (
+                  <span
+                    className="font-mono-num text-[11px] shrink-0"
+                    style={{
+                      color:
+                        item.id === 'trainer' && dueCardsCount > 0
+                          ? 'var(--accent-warm)'
+                          : 'var(--text-muted)',
+                    }}
+                  >
+                    {count}
                   </span>
                 )}
               </button>
@@ -177,86 +230,157 @@ export default function App() {
           })}
         </nav>
 
-        {/* Active Courses */}
+        {/* Subjects */}
         <div className="space-y-1">
-          <div className="px-2 pb-1.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-            Fächer & Themen
+          <div
+            className="px-2.5 pb-1 text-[11.5px] font-medium"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Fächer
           </div>
-          {state.courses.map((course) => {
-            const selected = course.id === activeCourse?.id;
-            return (
-              <button
-                key={course.id}
-                type="button"
-                onClick={() => setActiveCourse(course.id)}
-                className="w-full h-8 px-2.5 rounded-[7px] flex items-center gap-2 text-[13px] cursor-pointer transition-colors"
-                style={{
-                  backgroundColor: selected ? 'var(--accent-soft)' : 'transparent',
-                  color: selected ? 'var(--accent)' : 'var(--text-secondary)',
-                }}
-              >
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: course.accentColor }}
-                />
-                <span className="truncate">{course.title}</span>
-              </button>
-            );
-          })}
+          <div className="space-y-0.5">
+            {state.courses.map((course) => {
+              const selected = course.id === activeCourse?.id;
+              return (
+                <button
+                  key={course.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveCourse(course.id);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full h-8 px-2.5 rounded-lg flex items-center gap-2.5 text-[13px] cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/55"
+                  style={{
+                    backgroundColor: selected ? 'var(--bg-raised)' : undefined,
+                    color: selected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    fontWeight: selected ? 500 : 400,
+                  }}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: course.accentColor }}
+                  />
+                  <span className="truncate">{course.title}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Bottom Controls */}
-      <div className="pt-4 border-t space-y-2" style={{ borderColor: 'var(--border-hairline)' }}>
+      {/* Serene Bottom Controls */}
+      <div
+        className="pt-4 border-t space-y-3.5"
+        style={{ borderColor: 'var(--border-hairline)' }}
+      >
+        {/* 5-Scheme Tactile Swatch Switcher */}
+        <div className="px-1 space-y-2">
+          <div className="flex items-center justify-between gap-2 text-[11.5px]">
+            <span style={{ color: 'var(--text-muted)' }}>Farbschema</span>
+            <span
+              className="truncate font-medium"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {activeScheme.name}
+            </span>
+          </div>
+          <div
+            className="flex items-center justify-between gap-1.5"
+            role="radiogroup"
+            aria-label="Farbschema wählen"
+            onMouseLeave={() => setHoveredSchemeId(null)}
+          >
+            {COLOR_SCHEMES.map((scheme) => {
+              const selected = scheme.id === state.colorScheme;
+              return (
+                <button
+                  key={scheme.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  aria-label={`Farbschema ${scheme.name}`}
+                  title={`${scheme.name} — ${scheme.tagline}`}
+                  onClick={() => setColorScheme(scheme.id)}
+                  onMouseEnter={() => setHoveredSchemeId(scheme.id)}
+                  onFocus={() => setHoveredSchemeId(scheme.id)}
+                  onBlur={() => setHoveredSchemeId(null)}
+                  className="w-[26px] h-[26px] rounded-full p-0 overflow-hidden cursor-pointer transition-transform hover:scale-105 shrink-0"
+                  style={{
+                    outline: selected ? '1.5px solid var(--accent)' : undefined,
+                    outlineOffset: selected ? '2px' : undefined,
+                    boxShadow: 'inset 0 0 0 1px var(--border-strong)',
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="w-full h-full block"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="12" fill={scheme.swatches[0]} />
+                    <path d="M12 0 A12 12 0 0 1 12 24 Z" fill={scheme.swatches[1]} />
+                    <path
+                      d="M12 12 L24 12 A12 12 0 0 1 12 24 Z"
+                      fill={scheme.swatches[2]}
+                    />
+                  </svg>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Primary Voice Tutor Trigger */}
         <button
           type="button"
           onClick={() => openVoiceTutor()}
-          className="w-full h-9 px-3 rounded-[8px] border flex items-center justify-between text-[13px] font-medium cursor-pointer transition-colors"
-          style={{
-            backgroundColor: liveStatus === 'connected' ? 'var(--positive-soft)' : 'var(--accent-soft)',
-            borderColor: liveStatus === 'connected' ? 'var(--positive)' : 'var(--accent-border)',
-            color: liveStatus === 'connected' ? 'var(--positive)' : 'var(--accent)',
-          }}
+          className="btn-accent w-full justify-between"
         >
           <span className="flex items-center gap-2">
             <Mic size={15} strokeWidth={1.5} />
-            <span>Live Sprachtutor</span>
+            <span>Sprachtutor</span>
           </span>
-          <span className="font-mono-num text-[11px]">
-            {liveStatus === 'connected' ? 'Aktiv' : state.voice.languageLock.toUpperCase()}
-          </span>
+          {liveStatus === 'connected' ? (
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: 'var(--accent-warm)' }}
+              aria-label="Verbunden"
+              title="Live verbunden"
+            />
+          ) : (
+            <span className="font-mono-num text-[11px] opacity-85">
+              {state.voice.languageLock.toUpperCase()}
+            </span>
+          )}
         </button>
 
-        <div className="grid grid-cols-2 gap-1.5">
+        {/* Quiet Action Row */}
+        <div className="space-y-0.5">
           <button
             type="button"
             onClick={() => {
               setSettingsOpen(true);
               setMobileMenuOpen(false);
             }}
-            className="btn-secondary h-8 px-2.5 text-[12px] justify-start"
+            className="w-full h-8 px-2 rounded-lg flex items-center gap-2 text-[13px] cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/55"
+            style={{ color: 'var(--text-secondary)' }}
           >
             <Settings size={14} strokeWidth={1.5} />
-            <span>Anbieter</span>
+            <span>Einstellungen</span>
           </button>
 
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="btn-secondary h-8 px-2.5 text-[12px] justify-start"
-          >
-            {state.theme === 'light' ? (
-              <Moon size={14} strokeWidth={1.5} />
-            ) : (
-              <Sun size={14} strokeWidth={1.5} />
-            )}
-            <span>{state.theme === 'light' ? 'Dunkel' : 'Papier'}</span>
-          </button>
-        </div>
-
-        <div className="px-1 pt-0.5 text-[11px] flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
-          <span>{state.provider.freeOnlyLock ? 'Free-Tier aktiv' : 'Alle Anbieter'}</span>
-          <span>100 % lokal</span>
+          {canInstall && (
+            <button
+              type="button"
+              onClick={() => {
+                void promptInstall();
+              }}
+              className="w-full h-8 px-2 rounded-lg flex items-center gap-2 text-[13px] cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/55"
+              style={{ color: 'var(--accent)' }}
+            >
+              <Download size={14} strokeWidth={1.5} />
+              <span>Als App installieren</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -266,7 +390,7 @@ export default function App() {
     <div className="min-h-screen flex" style={{ backgroundColor: 'var(--bg-page)' }}>
       {/* Desktop Sidebar */}
       <aside
-        className="hidden lg:block w-[260px] shrink-0 border-r sticky top-0 h-screen overflow-y-auto"
+        className="hidden lg:block w-[244px] shrink-0 border-r sticky top-0 h-screen overflow-y-auto"
         style={{
           backgroundColor: 'var(--bg-sidebar)',
           borderColor: 'var(--border-hairline)',
@@ -292,22 +416,40 @@ export default function App() {
               className="btn-ghost p-1.5"
               aria-label="Menü öffnen"
             >
-              {mobileMenuOpen ? <X size={18} strokeWidth={1.5} /> : <Menu size={18} strokeWidth={1.5} />}
+              {mobileMenuOpen ? (
+                <X size={18} strokeWidth={1.5} />
+              ) : (
+                <Menu size={18} strokeWidth={1.5} />
+              )}
             </button>
-            <span className="text-[15px] font-semibold">OpenStudy</span>
+            <button
+              type="button"
+              onClick={() => navigate('home')}
+              className="flex items-center gap-2 cursor-pointer"
+            >
+              <FocusMark />
+              <span
+                className="font-display text-[18px] font-medium tracking-[-0.02em]"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                OpenStudy
+              </span>
+            </button>
           </div>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => openVoiceTutor()}
-              className="btn-secondary h-8 px-2.5 text-[12px]"
-              style={{
-                color: liveStatus === 'connected' ? 'var(--positive)' : 'var(--accent)',
-                borderColor: liveStatus === 'connected' ? 'var(--positive)' : 'var(--accent-border)',
-              }}
+              className="btn-accent h-8 px-3 text-[12.5px]"
             >
-              <Mic size={14} strokeWidth={1.5} />
-              <span>{liveStatus === 'connected' ? 'Live' : 'Tutor'}</span>
+              <Mic size={13} strokeWidth={1.5} />
+              <span>Tutor</span>
+              {liveStatus === 'connected' && (
+                <span
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ backgroundColor: 'var(--accent-warm)' }}
+                />
+              )}
             </button>
             <button
               type="button"
@@ -323,7 +465,7 @@ export default function App() {
         {mobileMenuOpen && (
           <div className="lg:hidden fixed inset-0 top-14 z-30 flex">
             <div
-              className="w-[272px] h-full border-r overflow-y-auto"
+              className="w-[260px] h-full border-r overflow-y-auto"
               style={{
                 backgroundColor: 'var(--bg-sidebar)',
                 borderColor: 'var(--border-hairline)',
@@ -335,12 +477,12 @@ export default function App() {
               type="button"
               aria-label="Menü schliessen"
               onClick={() => setMobileMenuOpen(false)}
-              className="flex-1 bg-black/35 border-0 cursor-pointer"
+              className="flex-1 bg-black/30 border-0 cursor-pointer"
             />
           </div>
         )}
 
-        <main className="flex-1 w-full max-w-[1440px] mx-auto px-5 sm:px-8 py-6 sm:py-8">
+        <main className="flex-1 w-full max-w-[1360px] mx-auto px-5 sm:px-8 lg:px-10 py-6 sm:py-9">
           {view === 'home' && (
             <HomeDashboard
               state={state}
@@ -351,6 +493,7 @@ export default function App() {
               onSetObjectiveMastery={setObjectiveMastery}
               onOpenVoiceTutor={openVoiceTutor}
               onOpenOnboarding={() => setForceOnboarding(true)}
+              onOpenSettings={() => setSettingsOpen(true)}
             />
           )}
           {view === 'notes' && (
@@ -416,34 +559,36 @@ export default function App() {
         onConnectionStateChange={setLiveStatus}
       />
 
-      {/* Multi-Provider & Privacy Settings */}
+      {/* Settings Modal */}
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         state={state}
         onUpdateProvider={updateProvider}
+        onSetColorScheme={setColorScheme}
+        onSetDailyGoalMinutes={setDailyGoalMinutes}
         onResetToDemo={resetToDemo}
         onReopenOnboarding={() => {
           setSettingsOpen(false);
           setForceOnboarding(true);
         }}
+        canInstallPwa={canInstall}
+        isPwaInstalled={isInstalled}
+        onInstallPwa={promptInstall}
       />
 
-      {/* Friendly 3-Step First-Run Onboarding */}
+      {/* Optional Setup Guide (never blocks first load) */}
       <OnboardingWizard
-        open={showOnboarding}
+        open={forceOnboarding}
         state={state}
         onUpdateProvider={updateProvider}
-        onUpdateVoice={updateVoice}
-        onSetDailyGoalMinutes={setDailyGoalMinutes}
         onComplete={() => {
           completeOnboarding();
           setForceOnboarding(false);
         }}
-        onOpenImport={() => {
-          completeOnboarding();
+        onOpenSettings={() => {
           setForceOnboarding(false);
-          navigate('import');
+          setSettingsOpen(true);
         }}
       />
     </div>

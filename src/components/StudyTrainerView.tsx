@@ -2,16 +2,17 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   BookMarked,
-  Bot,
   CalendarPlus,
   Check,
   CheckCircle2,
   ClipboardCheck,
   Clock,
+  Compass,
   Eye,
   GraduationCap,
   Layers,
   Loader2,
+  MessageSquare,
   Plus,
   RotateCcw,
   Send,
@@ -528,10 +529,10 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
   }, [activeCourse]);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 pb-10 animate-enter">
+    <div className="mx-auto max-w-6xl space-y-6 pb-10 animate-enter">
       {/* Header */}
       <header
-        className="flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-end sm:justify-between"
+        className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between"
         style={{ borderColor: 'var(--border-hairline)' }}
       >
         <div>
@@ -539,8 +540,8 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
             Spaced Repetition, Übungs-Quiz und persönlicher Lern-Agent
           </p>
           <h1
-            className="mt-1 text-[26px] font-semibold tracking-tight sm:text-[28px]"
-            style={{ color: 'var(--text-primary)', lineHeight: 1.2 }}
+            className="font-display font-normal mt-1 text-[30px] sm:text-[34px] leading-[1.15]"
+            style={{ color: 'var(--text-primary)' }}
           >
             Lern-Trainer
           </h1>
@@ -548,10 +549,9 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
 
         {/* 3-Tab Switcher */}
         <div
-          className="inline-flex rounded-xl border p-1"
+          className="inline-flex rounded-full p-1"
           style={{
             backgroundColor: 'var(--bg-raised)',
-            borderColor: 'var(--border-hairline)',
           }}
           role="tablist"
           aria-label="Lernmodi"
@@ -561,7 +561,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
             role="tab"
             aria-selected={activeTab === 'cards'}
             onClick={() => setActiveTab('cards')}
-            className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
             style={{
               backgroundColor: activeTab === 'cards' ? 'var(--bg-card)' : 'transparent',
               color: activeTab === 'cards' ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -569,7 +569,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
           >
             <Layers size={14} strokeWidth={1.5} />
             <span>Karteikarten</span>
-            <span className="font-mono-num text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="font-mono-num text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
               {dueCards.length}
             </span>
           </button>
@@ -579,7 +579,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
             role="tab"
             aria-selected={activeTab === 'quiz'}
             onClick={() => setActiveTab('quiz')}
-            className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
             style={{
               backgroundColor: activeTab === 'quiz' ? 'var(--bg-card)' : 'transparent',
               color: activeTab === 'quiz' ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -587,7 +587,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
           >
             <ClipboardCheck size={14} strokeWidth={1.5} />
             <span>Übungs-Quiz</span>
-            <span className="font-mono-num text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="font-mono-num text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
               {scopedQuizzes.length}
             </span>
           </button>
@@ -597,13 +597,13 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
             role="tab"
             aria-selected={activeTab === 'agent'}
             onClick={() => setActiveTab('agent')}
-            className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
             style={{
               backgroundColor: activeTab === 'agent' ? 'var(--bg-card)' : 'transparent',
               color: activeTab === 'agent' ? 'var(--text-primary)' : 'var(--text-secondary)',
             }}
           >
-            <Bot size={14} strokeWidth={1.5} />
+            <MessageSquare size={14} strokeWidth={1.5} />
             <span>Lern-Agent</span>
           </button>
         </div>
@@ -614,9 +614,9 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
         <button
           type="button"
           onClick={() => setScopeAll(true)}
-          className="rounded-lg border px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
+          className="rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
           style={{
-            backgroundColor: scopeAll ? 'var(--text-primary)' : 'var(--bg-card)',
+            backgroundColor: scopeAll ? 'var(--text-primary)' : 'transparent',
             color: scopeAll ? 'var(--bg-card)' : 'var(--text-secondary)',
             borderColor: scopeAll ? 'transparent' : 'var(--border-hairline)',
           }}
@@ -633,7 +633,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                 setScopeAll(false);
                 onSelectCourse(course.id);
               }}
-              className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
               style={{
                 backgroundColor: active ? 'var(--bg-card)' : 'transparent',
                 color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -652,7 +652,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
 
       {/* ================= TAB 1: FLASHCARDS (SM-2) ================= */}
       {activeTab === 'cards' && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
               <span>
@@ -680,7 +680,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
             <button
               type="button"
               onClick={() => setShowCardCreator((prev) => !prev)}
-              className="btn-secondary h-8 px-3 text-[13px]"
+              className="btn-secondary h-8 px-3.5 text-[13px]"
             >
               <Plus size={14} strokeWidth={1.5} />
               <span>Neue Karte</span>
@@ -689,9 +689,15 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
 
           {/* Inline Flashcard Creator */}
           {showCardCreator && (
-            <form onSubmit={handleCreateCard} className="surface-card p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <form onSubmit={handleCreateCard} className="surface-card p-6 space-y-4">
+              <div
+                className="flex items-center justify-between border-b pb-3"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <h2
+                  className="font-display font-normal text-[21px] leading-snug"
+                  style={{ color: 'var(--text-primary)' }}
+                >
                   Neue Karteikarte erstellen
                 </h2>
                 <button
@@ -702,9 +708,9 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                   Schliessen
                 </button>
               </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="mb-1.5 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                     Vorderseite (Frage / Begriff)
                   </label>
                   <textarea
@@ -713,7 +719,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                     value={newCardFront}
                     onChange={(e) => setNewCardFront(e.target.value)}
                     placeholder="Was unterscheidet Present Perfect von Past Simple?"
-                    className="w-full rounded-lg border p-2.5 text-[14px]"
+                    className="w-full rounded-lg border p-3 text-[14px]"
                     style={{
                       backgroundColor: 'var(--bg-page)',
                       borderColor: 'var(--border-hairline)',
@@ -722,7 +728,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="mb-1.5 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                     Rückseite (Antwort)
                   </label>
                   <textarea
@@ -731,7 +737,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                     value={newCardBack}
                     onChange={(e) => setNewCardBack(e.target.value)}
                     placeholder="Present Perfect verbindet Vergangenheit mit Gegenwart..."
-                    className="w-full rounded-lg border p-2.5 text-[14px]"
+                    className="w-full rounded-lg border p-3 text-[14px]"
                     style={{
                       backgroundColor: 'var(--bg-page)',
                       borderColor: 'var(--border-hairline)',
@@ -742,7 +748,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                 <div className="sm:col-span-5">
-                  <label className="mb-1 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="mb-1.5 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                     Hinweis (optional)
                   </label>
                   <input
@@ -750,7 +756,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                     value={newCardHint}
                     onChange={(e) => setNewCardHint(e.target.value)}
                     placeholder="Kleiner Denkanstoss..."
-                    className="w-full rounded-lg border px-3 py-1.5 text-[13px]"
+                    className="w-full rounded-lg border px-3 py-1.5 text-[13.5px]"
                     style={{
                       backgroundColor: 'var(--bg-page)',
                       borderColor: 'var(--border-hairline)',
@@ -759,13 +765,13 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                   />
                 </div>
                 <div className="sm:col-span-4">
-                  <label className="mb-1 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="mb-1.5 block text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                     Fach
                   </label>
                   <select
                     value={newCardCourseId}
                     onChange={(e) => setNewCardCourseId(e.target.value)}
-                    className="w-full rounded-lg border px-3 py-1.5 text-[13px]"
+                    className="w-full rounded-lg border px-3 py-1.5 text-[13.5px]"
                     style={{
                       backgroundColor: 'var(--bg-page)',
                       borderColor: 'var(--border-hairline)',
@@ -791,24 +797,27 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
 
           {/* Active Card Stage */}
           {!currentCard ? (
-            <div className="surface-card mx-auto max-w-2xl p-8 text-center">
+            <div className="surface-card mx-auto max-w-2xl p-10 text-center">
               <CheckCircle2
-                size={28}
+                size={26}
                 strokeWidth={1.5}
                 className="mx-auto"
                 style={{ color: 'var(--positive)' }}
               />
-              <h2 className="mt-3 text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <h2
+                className="font-display font-normal mt-3.5 text-[23px] leading-snug"
+                style={{ color: 'var(--text-primary)' }}
+              >
                 {scopedCards.length === 0
                   ? 'Noch keine Karteikarten in diesem Bereich'
                   : 'Alle fälligen Karten für heute erledigt'}
               </h2>
-              <p className="mt-1.5 text-[14px]" style={{ color: 'var(--text-secondary)' }}>
+              <p className="mt-2 text-[14px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                 {scopedCards.length === 0
-                  ? 'Erstelle oben eine neue Karte oder lasse den Lern-Agenten passende Karten generieren.'
-                  : 'SM-2 hat deine nächsten Wiederholungsintervalle gespeichert. Du kannst jederzeit alle Karten frei wiederholen.'}
+                  ? 'Erstelle oben eine neue Karte oder lass den Lern-Agenten passende Karten aus deinem Stoff erstellen.'
+                  : 'Deine nächsten Wiederholungsintervalle sind gespeichert. Du kannst jederzeit alle Karten frei wiederholen.'}
               </p>
-              <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
                 {scopedCards.length > 0 && (
                   <button
                     type="button"
@@ -824,15 +833,18 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                   onClick={() => setActiveTab('agent')}
                   className="btn-accent"
                 >
-                  <Bot size={15} strokeWidth={1.5} />
+                  <MessageSquare size={15} strokeWidth={1.5} />
                   <span>Karten mit Lern-Agent erstellen</span>
                 </button>
               </div>
             </div>
           ) : (
-            <div className="surface-card mx-auto max-w-3xl p-6 sm:p-8">
+            <div className="surface-card mx-auto max-w-3xl p-7 sm:p-9">
               {/* Meta bar */}
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 border-b pb-3.5 text-[12px]"
+                style={{ borderColor: 'var(--border-hairline)', color: 'var(--text-muted)' }}
+              >
                 <div className="flex items-center gap-2">
                   {courseMap.get(currentCard.courseId) && (
                     <>
@@ -856,25 +868,24 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
               </div>
 
               {/* Front */}
-              <div className="my-7 min-h-[110px]">
+              <div className="my-8 min-h-[120px]">
                 <p className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
                   Frage
                 </p>
                 <p
-                  className="mt-2 whitespace-pre-line text-[20px] font-medium leading-snug sm:text-[22px]"
+                  className="font-display font-normal mt-2.5 whitespace-pre-line text-[24px] sm:text-[28px] leading-[1.3]"
                   style={{ color: 'var(--text-primary)' }}
                 >
                   {currentCard.front}
                 </p>
 
                 {currentCard.hint && !isFlipped && (
-                  <div className="mt-4">
+                  <div className="mt-5">
                     {showHint ? (
                       <p
-                        className="rounded-lg border px-3 py-2 text-[13px]"
+                        className="border-l-2 py-0.5 pl-3 text-[13.5px] leading-relaxed"
                         style={{
-                          backgroundColor: 'var(--bg-page)',
-                          borderColor: 'var(--border-hairline)',
+                          borderColor: 'var(--accent-warm)',
                           color: 'var(--text-secondary)',
                         }}
                       >
@@ -884,7 +895,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       <button
                         type="button"
                         onClick={() => setShowHint(true)}
-                        className="btn-ghost h-7 px-2 text-[12px]"
+                        className="btn-ghost h-7 px-2 text-[12.5px]"
                       >
                         <Eye size={13} strokeWidth={1.5} />
                         <span>Hinweis einblenden</span>
@@ -910,13 +921,13 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                   </button>
                 </div>
               ) : (
-                <div className="border-t pt-5 space-y-6" style={{ borderColor: 'var(--border-hairline)' }}>
+                <div className="border-t pt-6 space-y-6" style={{ borderColor: 'var(--border-hairline)' }}>
                   <div>
                     <p className="text-[12px] font-medium" style={{ color: 'var(--accent)' }}>
                       Antwort
                     </p>
                     <p
-                      className="mt-2 whitespace-pre-line text-[15px] leading-relaxed"
+                      className="mt-2 whitespace-pre-line text-[15.5px] leading-relaxed"
                       style={{ color: 'var(--text-primary)' }}
                     >
                       {currentCard.back}
@@ -924,8 +935,8 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                   </div>
 
                   {/* SM-2 Rating Controls */}
-                  <div>
-                    <p className="mb-2.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="border-t pt-5" style={{ borderColor: 'var(--border-hairline)' }}>
+                    <p className="mb-3 text-[12px]" style={{ color: 'var(--text-muted)' }}>
                       Wie sicher war deine Antwort? (Tasten <span className="keycap">1</span> bis{' '}
                       <span className="keycap">4</span>)
                     </p>
@@ -933,10 +944,9 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRateCurrentCard(1)}
-                        className="flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-[13px] font-medium transition-colors cursor-pointer"
+                        className="flex items-center justify-between rounded-xl px-3.5 py-2.5 text-[13px] font-medium transition-opacity hover:opacity-90 cursor-pointer"
                         style={{
                           backgroundColor: 'var(--negative-soft)',
-                          borderColor: 'var(--border-hairline)',
                           color: 'var(--negative)',
                         }}
                       >
@@ -947,11 +957,10 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRateCurrentCard(2)}
-                        className="flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-[13px] font-medium transition-colors cursor-pointer"
+                        className="flex items-center justify-between rounded-xl px-3.5 py-2.5 text-[13px] font-medium transition-opacity hover:opacity-90 cursor-pointer"
                         style={{
-                          backgroundColor: 'var(--warning-soft)',
-                          borderColor: 'var(--border-hairline)',
-                          color: 'var(--warning)',
+                          backgroundColor: 'var(--accent-warm-soft)',
+                          color: 'var(--accent-warm)',
                         }}
                       >
                         <span>Schwer</span>
@@ -961,10 +970,9 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRateCurrentCard(3)}
-                        className="flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-[13px] font-medium transition-colors cursor-pointer"
+                        className="flex items-center justify-between rounded-xl px-3.5 py-2.5 text-[13px] font-medium transition-opacity hover:opacity-90 cursor-pointer"
                         style={{
                           backgroundColor: 'var(--accent-soft)',
-                          borderColor: 'var(--border-hairline)',
                           color: 'var(--accent)',
                         }}
                       >
@@ -975,10 +983,9 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleRateCurrentCard(4)}
-                        className="flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-[13px] font-medium transition-colors cursor-pointer"
+                        className="flex items-center justify-between rounded-xl px-3.5 py-2.5 text-[13px] font-medium transition-opacity hover:opacity-90 cursor-pointer"
                         style={{
                           backgroundColor: 'var(--positive-soft)',
-                          borderColor: 'var(--border-hairline)',
                           color: 'var(--positive)',
                         }}
                       >
@@ -996,7 +1003,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
 
       {/* ================= TAB 2: QUIZ & EXAM MODE ================= */}
       {activeTab === 'quiz' && (
-        <div className="space-y-4">
+        <div className="space-y-5">
           {/* Quiz Top Controls */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
@@ -1008,10 +1015,10 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
               </span>
               {examMode && !quizFinished && scopedQuizzes.length > 0 && (
                 <span
-                  className="font-mono-num inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] font-medium"
+                  className="font-mono-num inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[12px] font-medium"
                   style={{
-                    backgroundColor: examSecondsLeft <= 30 ? 'var(--negative-soft)' : 'var(--warning-soft)',
-                    color: examSecondsLeft <= 30 ? 'var(--negative)' : 'var(--warning)',
+                    backgroundColor: examSecondsLeft <= 30 ? 'var(--negative-soft)' : 'var(--accent-warm-soft)',
+                    color: examSecondsLeft <= 30 ? 'var(--negative)' : 'var(--accent-warm)',
                   }}
                 >
                   <Clock size={13} strokeWidth={1.5} />
@@ -1022,11 +1029,11 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
 
             <div className="flex items-center gap-2">
               <label
-                className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-[13px] cursor-pointer"
+                className="inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-[13px] cursor-pointer"
                 style={{
-                  backgroundColor: examMode ? 'var(--accent-soft)' : 'var(--bg-card)',
-                  borderColor: examMode ? 'var(--accent-border)' : 'var(--border-hairline)',
-                  color: examMode ? 'var(--accent)' : 'var(--text-secondary)',
+                  backgroundColor: examMode ? 'var(--accent-warm-soft)' : 'transparent',
+                  borderColor: examMode ? 'var(--accent-warm-border)' : 'var(--border-hairline)',
+                  color: examMode ? 'var(--accent-warm)' : 'var(--text-secondary)',
                 }}
               >
                 <input
@@ -1042,7 +1049,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       setExamSecondsLeft(scopedQuizzes.length * 45);
                     }
                   }}
-                  className="h-3.5 w-3.5 accent-[var(--accent)] cursor-pointer"
+                  className="h-3.5 w-3.5 accent-[var(--accent-warm)] cursor-pointer"
                 />
                 <span>Prüfungsmodus (Zeitlimit)</span>
               </label>
@@ -1055,36 +1062,39 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
           </div>
 
           {scopedQuizzes.length === 0 ? (
-            <div className="surface-card mx-auto max-w-2xl p-8 text-center">
+            <div className="surface-card mx-auto max-w-2xl p-10 text-center">
               <GraduationCap size={26} strokeWidth={1.5} className="mx-auto" style={{ color: 'var(--text-muted)' }} />
-              <h2 className="mt-3 text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <h2
+                className="font-display font-normal mt-3 text-[22px] leading-snug"
+                style={{ color: 'var(--text-primary)' }}
+              >
                 Keine Quizfragen für dieses Fach gefunden
               </h2>
-              <p className="mt-1 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              <p className="mt-1.5 text-[13.5px]" style={{ color: 'var(--text-secondary)' }}>
                 Wähle oben «Alle Fächer» oder lass den Lern-Agenten neue Übungsfragen erstellen.
               </p>
             </div>
           ) : quizFinished ? (
-            <div className="surface-card mx-auto max-w-3xl p-6 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-4" style={{ borderColor: 'var(--border-hairline)' }}>
+            <div className="surface-card mx-auto max-w-3xl p-7 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-5" style={{ borderColor: 'var(--border-hairline)' }}>
                 <div>
                   <p className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
                     {examMode ? 'Prüfungs-Auswertung' : 'Quiz-Auswertung'}
                   </p>
-                  <h2 className="mt-1 text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <h2
+                    className="font-display font-normal mt-1 text-[26px] leading-tight"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
                     <span className="font-mono-num">
                       {quizScore.correct} / {quizScore.total}
                     </span>{' '}
                     richtig beantwortet
                   </h2>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3.5">
                   <span
-                    className="font-mono-num rounded-xl px-3.5 py-2 text-[18px] font-semibold"
-                    style={{
-                      backgroundColor: 'var(--accent-soft)',
-                      color: 'var(--accent)',
-                    }}
+                    className="font-mono-num text-[22px] font-medium"
+                    style={{ color: 'var(--accent)' }}
                   >
                     {quizScore.total > 0 ? Math.round((quizScore.correct / quizScore.total) * 100) : 0}%
                   </span>
@@ -1095,30 +1105,27 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                 </div>
               </div>
 
-              <div className="space-y-3">
+              <div className="divide-y" style={{ borderColor: 'var(--border-hairline)' }}>
                 {scopedQuizzes.map((q, idx) => {
                   const chosen = quizAnswers[q.id];
                   const correct = chosen === q.correctIndex;
                   return (
                     <div
                       key={q.id}
-                      className="rounded-xl border p-4"
-                      style={{
-                        backgroundColor: 'var(--bg-page)',
-                        borderColor: 'var(--border-hairline)',
-                      }}
+                      className="py-4 first:pt-1 last:pb-1"
+                      style={{ borderColor: 'var(--border-hairline)' }}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-[14px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-[14.5px] font-medium leading-snug" style={{ color: 'var(--text-primary)' }}>
                           <span className="font-mono-num mr-1.5" style={{ color: 'var(--text-muted)' }}>
                             {idx + 1}.
                           </span>
                           {q.prompt}
                         </p>
                         {correct ? (
-                          <CheckCircle2 size={16} strokeWidth={1.5} className="shrink-0" style={{ color: 'var(--positive)' }} />
+                          <CheckCircle2 size={16} strokeWidth={1.5} className="mt-0.5 shrink-0" style={{ color: 'var(--positive)' }} />
                         ) : (
-                          <XCircle size={16} strokeWidth={1.5} className="shrink-0" style={{ color: 'var(--negative)' }} />
+                          <XCircle size={16} strokeWidth={1.5} className="mt-0.5 shrink-0" style={{ color: 'var(--negative)' }} />
                         )}
                       </div>
                       <p className="mt-2 text-[13px]" style={{ color: 'var(--positive)' }}>
@@ -1129,7 +1136,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                           Deine Wahl: {q.options[chosen]}
                         </p>
                       )}
-                      <p className="mt-2 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                      <p className="mt-2 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                         {q.explanation}
                       </p>
                     </div>
@@ -1139,7 +1146,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
             </div>
           ) : (
             currentQuiz && (
-              <div className="surface-card mx-auto max-w-3xl p-6 space-y-5">
+              <div className="surface-card mx-auto max-w-3xl p-7 space-y-6">
                 {/* Progress */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-[12px]" style={{ color: 'var(--text-muted)' }}>
@@ -1156,40 +1163,39 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       className="h-full rounded-full transition-all duration-300"
                       style={{
                         width: `${Math.round(((safeQuizIndex + 1) / scopedQuizzes.length) * 100)}%`,
-                        backgroundColor: 'var(--accent)',
+                        backgroundColor: examMode ? 'var(--accent-warm)' : 'var(--accent)',
                       }}
                     />
                   </div>
                 </div>
 
                 {/* Question prompt */}
-                <h2 className="text-[18px] font-medium leading-snug" style={{ color: 'var(--text-primary)' }}>
+                <h2
+                  className="font-display font-normal text-[23px] leading-[1.3]"
+                  style={{ color: 'var(--text-primary)' }}
+                >
                   {currentQuiz.prompt}
                 </h2>
 
                 {/* Options */}
-                <div className="space-y-2.5">
+                <div className="divide-y border-y" style={{ borderColor: 'var(--border-hairline)' }}>
                   {currentQuiz.options.map((opt, idx) => {
                     const chosen = quizAnswers[currentQuiz.id];
                     const hasAnswered = chosen !== undefined;
                     const isSelected = chosen === idx;
                     const isRight = idx === currentQuiz.correctIndex;
 
-                    let bg = 'var(--bg-card)';
-                    let border = 'var(--border-hairline)';
+                    let bg = 'transparent';
 
                     if (examMode) {
                       if (isSelected) {
                         bg = 'var(--accent-soft)';
-                        border = 'var(--accent-border)';
                       }
                     } else if (hasAnswered) {
                       if (isRight) {
                         bg = 'var(--positive-soft)';
-                        border = 'var(--positive)';
                       } else if (isSelected) {
                         bg = 'var(--negative-soft)';
-                        border = 'var(--negative)';
                       }
                     }
 
@@ -1201,16 +1207,16 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                         onClick={() =>
                           setQuizAnswers((prev) => ({ ...prev, [currentQuiz.id]: idx }))
                         }
-                        className="flex w-full items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left transition-colors cursor-pointer disabled:cursor-default"
+                        className="flex w-full items-center justify-between gap-3 px-3 py-3.5 text-left transition-colors cursor-pointer disabled:cursor-default hover:bg-[var(--bg-page)]/70"
                         style={{
                           backgroundColor: bg,
-                          borderColor: border,
+                          borderColor: 'var(--border-hairline)',
                           color: 'var(--text-primary)',
                         }}
                       >
                         <div className="flex items-center gap-3">
                           <span className="keycap shrink-0">{OPTION_KEYS[idx] ?? idx + 1}</span>
-                          <span className="text-[14px]">{opt}</span>
+                          <span className="text-[14.5px]">{opt}</span>
                         </div>
                         {!examMode && hasAnswered && isRight && (
                           <CheckCircle2 size={16} strokeWidth={1.5} style={{ color: 'var(--positive)' }} />
@@ -1226,43 +1232,41 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                 {/* Instant explanation in practice mode */}
                 {!examMode && quizAnswers[currentQuiz.id] !== undefined && (
                   <div
-                    className="rounded-xl border p-3.5 text-[13px] leading-relaxed"
+                    className="border-l-2 py-1 pl-3.5 text-[13.5px] leading-relaxed"
                     style={{
-                      backgroundColor:
+                      borderColor:
                         quizAnswers[currentQuiz.id] === currentQuiz.correctIndex
-                          ? 'var(--positive-soft)'
-                          : 'var(--warning-soft)',
-                      borderColor: 'var(--border-hairline)',
+                          ? 'var(--positive)'
+                          : 'var(--accent-warm)',
                       color: 'var(--text-primary)',
                     }}
                   >
                     <p
-                      className="font-semibold"
+                      className="font-medium"
                       style={{
                         color:
                           quizAnswers[currentQuiz.id] === currentQuiz.correctIndex
                             ? 'var(--positive)'
-                            : 'var(--warning)',
+                            : 'var(--accent-warm)',
                       }}
                     >
                       {quizAnswers[currentQuiz.id] === currentQuiz.correctIndex
                         ? 'Korrekt'
                         : 'Erklärung'}
                     </p>
-                    <p className="mt-1">{currentQuiz.explanation}</p>
+                    <p className="mt-1" style={{ color: 'var(--text-secondary)' }}>
+                      {currentQuiz.explanation}
+                    </p>
                   </div>
                 )}
 
                 {/* Navigation footer */}
-                <div
-                  className="flex items-center justify-between border-t pt-4"
-                  style={{ borderColor: 'var(--border-hairline)' }}
-                >
+                <div className="flex items-center justify-between pt-1">
                   <button
                     type="button"
                     disabled={safeQuizIndex === 0}
                     onClick={() => setQuizIndex((i) => Math.max(0, i - 1))}
-                    className="btn-secondary h-8 px-3 text-[13px] disabled:opacity-45"
+                    className="btn-secondary h-8 px-3.5 text-[13px] disabled:opacity-45"
                   >
                     Zurück
                   </button>
@@ -1291,13 +1295,16 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
         </div>
       )}
 
-      {/* ================= TAB 3: LERN-AGENT (HERMES-STYLE) ================= */}
+      {/* ================= TAB 3: LERN-AGENT ================= */}
       {activeTab === 'agent' && (
-        <div className="space-y-4">
-          {/* Explicit 2-Way Stance Selector */}
-          <section className="surface-card p-4 sm:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div className="flex flex-wrap items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+        <div className="space-y-5">
+          {/* Editorial 2-Way Stance Selector */}
+          <section className="surface-card p-6">
+            <div
+              className="flex flex-wrap items-center justify-between gap-2 border-b pb-3.5"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
+              <div className="flex flex-wrap items-center gap-2 text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
                 <BookMarked size={14} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
                 <span>Kontext: {activeCourse?.title ?? 'Alle Fächer'}</span>
                 <span>·</span>
@@ -1330,61 +1337,76 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div
+              className="mt-4 grid grid-cols-1 gap-4 border-b pb-4 md:grid-cols-2 md:gap-6"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
               <button
                 type="button"
                 onClick={() => onUpdateVoice({ stance: 'coach' })}
-                className="rounded-xl border p-3.5 text-left transition-colors cursor-pointer"
+                className="border-l-2 py-1 pl-3.5 text-left transition-colors cursor-pointer"
                 style={{
-                  backgroundColor:
-                    state.voice.stance === 'coach' ? 'var(--accent-soft)' : 'var(--bg-page)',
                   borderColor:
-                    state.voice.stance === 'coach' ? 'var(--accent-border)' : 'var(--border-hairline)',
+                    state.voice.stance === 'coach' ? 'var(--accent)' : 'var(--border-hairline)',
                 }}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{
+                      backgroundColor:
+                        state.voice.stance === 'coach' ? 'var(--accent)' : 'var(--border-strong)',
+                    }}
+                  />
+                  <span
+                    className="text-[14.5px] font-medium"
+                    style={{
+                      color:
+                        state.voice.stance === 'coach'
+                          ? 'var(--text-primary)'
+                          : 'var(--text-secondary)',
+                    }}
+                  >
                     Coach-Modus (Standard)
                   </span>
-                  {state.voice.stance === 'coach' && (
-                    <span
-                      className="rounded-md px-2 py-0.5 text-[11px] font-medium"
-                      style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-                    >
-                      Aktiv
-                    </span>
-                  )}
                 </div>
                 <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                  Hilft dir mit Fragen, Tipps & Erklärungen, damit du es selbst verstehst.
+                  Hilft dir mit Rückfragen, Denkanstössen und Erklärungen, damit du den Stoff selbst verstehst.
                 </p>
               </button>
 
               <button
                 type="button"
                 onClick={() => onUpdateVoice({ stance: 'assistant' })}
-                className="rounded-xl border p-3.5 text-left transition-colors cursor-pointer"
+                className="border-l-2 py-1 pl-3.5 text-left transition-colors cursor-pointer"
                 style={{
-                  backgroundColor:
-                    state.voice.stance === 'assistant' ? 'var(--accent-soft)' : 'var(--bg-page)',
                   borderColor:
                     state.voice.stance === 'assistant'
-                      ? 'var(--accent-border)'
+                      ? 'var(--accent-warm)'
                       : 'var(--border-hairline)',
                 }}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{
+                      backgroundColor:
+                        state.voice.stance === 'assistant'
+                          ? 'var(--accent-warm)'
+                          : 'var(--border-strong)',
+                    }}
+                  />
+                  <span
+                    className="text-[14.5px] font-medium"
+                    style={{
+                      color:
+                        state.voice.stance === 'assistant'
+                          ? 'var(--text-primary)'
+                          : 'var(--text-secondary)',
+                    }}
+                  >
                     Assistenz-Modus
                   </span>
-                  {state.voice.stance === 'assistant' && (
-                    <span
-                      className="rounded-md px-2 py-0.5 text-[11px] font-medium"
-                      style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
-                    >
-                      Aktiv
-                    </span>
-                  )}
                 </div>
                 <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                   Erstellt auf Wunsch direkt Lernpläne, Karteikarten oder strukturierte Zusammenfassungen.
@@ -1393,7 +1415,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
             </div>
 
             {/* Quick Action Chips */}
-            <div className="mt-3.5 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
                 disabled={isAgentBusy}
@@ -1403,10 +1425,10 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                     'assistant'
                   )
                 }
-                className="btn-secondary h-8 px-3 text-[12px]"
+                className="btn-secondary h-8 px-3 text-[12.5px]"
               >
                 <Layers size={13} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                <span>Erstelle 3 Karteikarten zum aktuellen Fach</span>
+                <span>3 Karteikarten zum aktuellen Fach</span>
               </button>
 
               <button
@@ -1420,10 +1442,10 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                     'coach'
                   )
                 }
-                className="btn-secondary h-8 px-3 text-[12px]"
+                className="btn-secondary h-8 px-3 text-[12.5px]"
               >
-                <GraduationCap size={13} strokeWidth={1.5} style={{ color: 'var(--warning)' }} />
-                <span>Erkläre das schwierigste Lernziel in Depth</span>
+                <GraduationCap size={13} strokeWidth={1.5} style={{ color: 'var(--accent-warm)' }} />
+                <span>Schwierigstes Lernziel vertiefen</span>
               </button>
 
               <button
@@ -1435,25 +1457,28 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                     'assistant'
                   )
                 }
-                className="btn-secondary h-8 px-3 text-[12px]"
+                className="btn-secondary h-8 px-3 text-[12.5px]"
               >
                 <CalendarPlus size={13} strokeWidth={1.5} style={{ color: 'var(--positive)' }} />
-                <span>Erstelle einen 3-Tage-Lernplan</span>
+                <span>3-Tage-Lernplan erstellen</span>
               </button>
             </div>
           </section>
 
           {/* Chat Thread & Composer */}
           <section className="surface-card flex flex-col overflow-hidden">
-            <div className="min-h-[300px] max-h-[480px] overflow-y-auto p-5 space-y-4">
+            <div className="min-h-[300px] max-h-[500px] overflow-y-auto p-6 space-y-5">
               {messages.length === 0 ? (
                 <div className="flex h-full min-h-[240px] flex-col items-center justify-center text-center">
-                  <Bot size={26} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                  <h2 className="mt-3 text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    Stelle eine Frage oder wähle eine Schnellaktion
+                  <Compass size={24} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
+                  <h2
+                    className="font-display font-normal mt-3.5 text-[22px] leading-snug"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    Stelle eine Frage oder wähle einen Impuls
                   </h2>
-                  <p className="mt-1 max-w-md text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                    Der Lern-Agent kennt deine Lernziele im aktiven Fach sowie alle gewählten Obsidian-Notizen. Generierte Karteikarten und Lernblöcke lassen sich mit einem Klick übernehmen.
+                  <p className="mt-1.5 max-w-md text-[13.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                    Der Lern-Agent kennt deine Lernziele im aktiven Fach sowie gewählte Obsidian-Notizen. Karteikarten und Lernblöcke lassen sich direkt übernehmen.
                   </p>
                 </div>
               ) : (
@@ -1468,14 +1493,27 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                       className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
                     >
                       <div
-                        className="max-w-[88%] rounded-2xl border px-4 py-3 text-[14px] leading-relaxed"
-                        style={{
-                          backgroundColor: isUser ? 'var(--bg-raised)' : 'var(--bg-page)',
-                          borderColor: 'var(--border-hairline)',
-                          color: 'var(--text-primary)',
-                        }}
+                        className={
+                          isUser
+                            ? 'max-w-[85%] rounded-2xl px-4 py-3 text-[14px] leading-relaxed'
+                            : 'max-w-[92%] border-l-2 pl-4 py-1 text-[14.5px] leading-relaxed'
+                        }
+                        style={
+                          isUser
+                            ? {
+                                backgroundColor: 'var(--bg-raised)',
+                                color: 'var(--text-primary)',
+                              }
+                            : {
+                                borderColor:
+                                  msg.stance === 'assistant'
+                                    ? 'var(--accent-warm)'
+                                    : 'var(--accent)',
+                                color: 'var(--text-primary)',
+                              }
+                        }
                       >
-                        <div className="mb-1.5 flex items-center justify-between gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <div className="mb-1.5 flex items-center justify-between gap-3 text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
                           <span className="font-medium">
                             {isUser
                               ? 'Du'
@@ -1483,14 +1521,14 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                               ? 'Lern-Agent · Assistenz'
                               : 'Lern-Agent · Coach'}
                           </span>
-                          {msg.usedProvider && <span>{msg.usedProvider}</span>}
+                          {msg.usedProvider && <span className="font-mono-num">{msg.usedProvider}</span>}
                         </div>
                         <div className="whitespace-pre-wrap">{msg.content}</div>
 
                         {/* 1-Click Save Actions for Generated Cards / Study Plan */}
                         {!isUser && (parsedCards.length > 0 || parsedPlan.length > 0) && (
                           <div
-                            className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3"
+                            className="mt-3.5 flex flex-wrap items-center gap-2 border-t pt-3"
                             style={{ borderColor: 'var(--border-hairline)' }}
                           >
                             {parsedCards.length > 0 && (
@@ -1508,7 +1546,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                                 ) : (
                                   <>
                                     <Layers size={13} strokeWidth={1.5} />
-                                    <span>{parsedCards.length} Karteikarten direkt speichern</span>
+                                    <span>{parsedCards.length} Karteikarten speichern</span>
                                   </>
                                 )}
                               </button>
@@ -1529,7 +1567,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                                 ) : (
                                   <>
                                     <CalendarPlus size={13} strokeWidth={1.5} />
-                                    <span>{parsedPlan.length} Blöcke in den Tagesplan übernehmen</span>
+                                    <span>{parsedPlan.length} Blöcke übernehmen</span>
                                   </>
                                 )}
                               </button>
@@ -1545,22 +1583,21 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
               {isAgentBusy && (
                 <div className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--text-muted)' }}>
                   <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
-                  <span>Lern-Agent denkt nach...</span>
+                  <span>Lern-Agent formuliert Antwort...</span>
                 </div>
               )}
 
               {agentError && (
                 <div
-                  className="rounded-xl border p-3.5 text-[13px]"
+                  className="border-l-2 py-1 pl-3.5 text-[13px]"
                   style={{
-                    backgroundColor: 'var(--warning-soft)',
-                    borderColor: 'var(--border-hairline)',
+                    borderColor: 'var(--accent-warm)',
                     color: 'var(--text-primary)',
                   }}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-start gap-2">
-                      <AlertCircle size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" style={{ color: 'var(--warning)' }} />
+                      <AlertCircle size={15} strokeWidth={1.5} className="mt-0.5 shrink-0" style={{ color: 'var(--accent-warm)' }} />
                       <span>{agentError}</span>
                     </div>
                     <button
@@ -1583,7 +1620,7 @@ export const StudyTrainerView: React.FC<StudyTrainerViewProps> = ({
                 e.preventDefault();
                 sendAgentPrompt(agentInput);
               }}
-              className="border-t p-3.5"
+              className="border-t p-4"
               style={{
                 borderColor: 'var(--border-hairline)',
                 backgroundColor: 'var(--bg-page)',

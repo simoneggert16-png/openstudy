@@ -1,8 +1,11 @@
 # OpenStudy
 
-**Free, privacy-first, open-source AI learning studio for everyone — regardless of age, budget, or technical experience.**
+**Free, privacy-first, open-source AI learning studio for everyone — calm by design, local by default, and usable with zero technical setup.**
 
-Learn any subject or language with a calm real-time voice tutor, built-in Notion-style notes, local Obsidian vault context, focus sessions, daily study plans, and flexible Bring-Your-Own-Provider AI support.
+Learn any subject or language with a real-time voice tutor, built-in block notes, direct local Obsidian folder access, a focus planner, daily study plans, and flexible Bring-Your-Own-Provider AI support.
+
+- **Website & Live App:** [simoneggert16-png.github.io/openstudy](https://simoneggert16-png.github.io/openstudy/)
+- **Source Code:** [github.com/simoneggert16-png/openstudy](https://github.com/simoneggert16-png/openstudy)
 
 ---
 
@@ -14,36 +17,50 @@ Learn any subject or language with a calm real-time voice tutor, built-in Notion
 | :---: | :---: |
 | ![OpenStudy Dashboard](docs/previews/01-dashboard.png) | ![OpenStudy Voice Tutor](docs/previews/02-voice-tutor.png) |
 
-| Built-in Notion-Style Notes & Wikilinks | Focus Timer & 5-Language Grammar Studio |
+| Built-in Notes Studio & Wikilinks | Focus Timer & 5-Language Grammar Studio |
 | :---: | :---: |
 | ![OpenStudy Notes Workspace](docs/previews/03-notion-notes.png) | ![OpenStudy Language & Focus](docs/previews/04-focus-languages.png) |
 
 ---
 
-## Why OpenStudy?
+## Key Capabilities
 
-- **100% Free to Use:** Works out of the box with Google AI Studio's **Free Tier** (`gemini-3.8-live` for real-time speech & `gemini-3.8-flash` for text) or completely offline with **Ollama** (0 cost, zero API key). A built-in **Free-Only Lock** prevents accidental paid API usage.
-- **Privacy First — Your Data Stays Yours:** Notes, study plans, Obsidian context, and API keys stay strictly on your device (`.env.local` / local browser storage). Nothing is uploaded to any OpenStudy server.
-- **Simple Universal Installer:** Download and run a single installer — no terminal knowledge required. Includes an optional 1-click checkbox to install **Obsidian** and set up your study vault automatically.
+- **Zero-Warning Installable Desktop App (PWA):** Launch OpenStudy directly in the browser and install it as a standalone desktop or mobile app with one click — no unsigned executable downloads, no OS warning dialogs, and no admin privileges required.
+- **Five Curated Focus Color Schemes:** Switch live between five warm, low-glare studio palettes designed for long reading and study sessions:
+  - `focus-cream` — Warm unbleached paper cream, deep heritage teal, and burnt orange
+  - `midnight-teal` — Deep pine night with sea teal and warm ember accents
+  - `terracotta-paper` — Warm linen paper, terracotta rust, and deep botanical teal
+  - `botanical-sage` — Soft oat paper, forest sage, and warm ochre
+  - `espresso-ember` — Dark roast surface with warm copper and calm seafoam teal
+- **Simplified, Account-Free Onboarding:** Start learning in seconds without creating an account. Use the built-in notes, flashcards, and focus timer immediately with zero API key, or optionally connect Google AI Studio's free tier or a local Ollama instance.
+- **Privacy First & Cost Protection:** Notes, study plans, Obsidian context, and API keys stay strictly on your device (local browser storage / `.env.local`). A built-in **Free-Only Lock** restricts model selection to free tiers and local models by default, and JSON backups automatically strip stored API keys on export.
 - **Voice Tutor 2.0:**
-  - **Voice Preview:** Hear every voice (`Kore`, `Zephyr`, `Puck`, `Charon`, `Fenrir`, `Aoede`) before starting a conversation.
-  - **Calm, Controllable Speaking Pace:** Choose *Slow*, *Calm*, or *Normal*.
-  - **Strict Language Locking:** Practice German, English, French, Spanish, or Italian without the model drifting into other languages — plus an optional bilingual grammar-coach mode.
-  - **Adaptive Depth:** Concise 2–4 sentence replies by default; say *"explain in depth"* (or toggle *In Depth*) whenever you want a deep step-by-step walkthrough.
-- **Built-in Knowledge Hub + Obsidian & Notion:** Use the local block-based Notion alternative immediately, connect any local **Obsidian** vault folder for personal context, or import Notion Markdown exports and school `.ics` calendars / syllabus sheets cleanly.
-- **Coach First, Assistant on Demand:** The integrated study agent defaults to **Coach Mode** (guides you to understand concepts yourself) and can be switched to **Assistant Mode** whenever you want flashcards, study plans, or structured summaries generated directly.
-- **Bring Your Own Provider (Power Users):** Plug in Google Free Tier, Ollama (local), OpenRouter, Anthropic, OpenAI-compatible endpoints, or connect existing local installations of **Antigravity**, **Claude Code**, or **OpenAI Codex CLI** via the optional localhost companion bridge (`bridge/server.mjs`).
+  - **Voice Preview:** Audition all six voices (`Kore`, `Zephyr`, `Puck`, `Charon`, `Fenrir`, `Aoede`) before starting a session.
+  - **Controllable Speaking Pace:** Choose *Slow*, *Calm*, or *Normal*.
+  - **Strict Language Locking:** Practice German, English, French, Spanish, or Italian without language drift, plus an optional bilingual grammar-coach mode.
+  - **Adaptive Depth:** Concise 2–4 sentence answers by default, with an on-demand *In Depth* mode for step-by-step explanations.
+- **Built-in Notes Studio & Direct Obsidian Vault Access:** Use the local block editor right away, connect any local **Obsidian** vault folder directly from Chrome or Edge without extra software, or import Notion Markdown exports and `.ics` schedules.
+- **Coach First, Assistant on Demand:** Defaults to **Coach Mode** (guides you to reason through material yourself) and switches to **Assistant Mode** whenever you want flashcards, study plans, or structured summaries generated directly.
+- **Bring Your Own Provider:** Works with Google AI Studio Free Tier, local **Ollama** (offline, zero key), OpenRouter, Anthropic, OpenAI-compatible endpoints, or local CLI agents (**Antigravity**, **Claude Code**, **OpenAI Codex CLI**) via the optional localhost companion bridge (`bridge/server.mjs`).
 
 ---
 
-## Quick Start (Zero Technical Knowledge)
+## Quick Start
 
-### Option 1 — Universal 1-Click Installer
-- **Windows:** Download & run [`installer/windows/OpenStudy-Setup.exe`](installer/windows/OpenStudy-Setup.exe) (optional checkboxes for automatic Obsidian & Ollama setup).
-- **macOS:** Double-click [`installer/macos/Install-OpenStudy.command`](installer/macos/Install-OpenStudy.command).
-- **Linux:** Run [`installer/linux/install-openstudy.sh`](installer/linux/install-openstudy.sh).
+### Option 1 — Instant Browser Launch & Desktop App (Recommended)
 
-### Option 2 — Developer Setup
+No downloads, no terminal commands, and no browser security warnings.
+
+1. **Open OpenStudy:** Visit [https://simoneggert16-png.github.io/openstudy/](https://simoneggert16-png.github.io/openstudy/), optionally pick one of the five Focus color schemes, and click **OpenStudy öffnen**.
+2. **Install as a Desktop App (10 seconds):**
+   - **Chrome / Edge / Brave (Windows, macOS, Linux):** Click the **Install** icon on the right side of the address bar (or use the in-app install prompt). OpenStudy opens in its own dedicated app window with a desktop/dock icon.
+   - **Safari (macOS / iPad / iPhone):** Choose **Share → Add to Dock** (macOS) or **Share → Add to Home Screen** (iOS / iPadOS).
+3. **Connect Obsidian Directly (Optional):** In Chrome or Edge, open the Notes / Obsidian view inside OpenStudy and select your local Obsidian folder directly — no helper utility needed.
+
+> Tip: Append `?mode=demo&scheme=midnight-teal` (or any of the five scheme IDs) to open the isolated demo workspace directly in a specific palette.
+
+### Option 2 — Run Locally from Source (Developers)
+
 ```bash
 git clone https://github.com/simoneggert16-png/openstudy.git
 cd openstudy
@@ -53,24 +70,28 @@ npm run dev
 
 Open `http://127.0.0.1:5175/` (or `http://127.0.0.1:5175/?mode=demo` for the isolated demo workspace).
 
-### Optional Local Companion Bridge (Obsidian Sync, Daily Reminders & Local CLI Agents)
+### Optional Local Companion Bridge (Local CLI Agents & Background Helpers)
+
 ```bash
 npm run bridge
 ```
-Runs strictly on `127.0.0.1:4319` (never exposed to the network).
+
+Runs strictly on `127.0.0.1:4319` (never exposed to the network) to connect local installations of Antigravity, Claude Code, or Codex CLI.
 
 ---
 
 ## Privacy & Security Verification
 
-Before publishing or committing changes, run the built-in privacy & secret scanner:
+Before publishing or committing changes, run the built-in privacy and secret scanner:
+
 ```bash
 npm run privacy-check
 ```
-This verifies that zero API keys, zero `.env` files, zero local machine paths, and zero private data folders exist inside tracked repository files.
+
+This checks that zero API keys, zero `.env` files, zero hardcoded user paths, and zero private data folders exist inside tracked repository files.
 
 ---
 
 ## License
 
-Released under the [MIT License](LICENSE). Built to make high-quality, private AI-assisted learning accessible to everyone.
+Released under the [MIT License](LICENSE). Built to make calm, private, AI-assisted learning accessible to everyone.

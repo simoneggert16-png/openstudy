@@ -1,21 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import {
   ArrowRight,
+  ArrowUpRight,
   BookOpen,
-  Calendar,
   Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Circle,
   CircleDot,
-  Flame,
   GraduationCap,
-  Languages,
-  Layers,
+  MessageCircle,
   Mic,
-  Settings2,
-  Target,
   Timer,
 } from 'lucide-react';
 import {
@@ -35,6 +31,7 @@ export interface HomeDashboardProps {
   onSetObjectiveMastery: (courseId: string, objectiveId: string, mastery: MasteryState) => void;
   onOpenVoiceTutor: (opts?: { mode?: TutorMode; language?: StudyLanguage }) => void;
   onOpenOnboarding: () => void;
+  onOpenSettings: () => void;
 }
 
 const MASTERY_CYCLE: Record<MasteryState, MasteryState> = {
@@ -43,24 +40,18 @@ const MASTERY_CYCLE: Record<MasteryState, MasteryState> = {
   mastered: 'open',
 };
 
-const MASTERY_META: Record<
-  MasteryState,
-  { label: string; color: string; bg: string }
-> = {
+const MASTERY_META: Record<MasteryState, { label: string; color: string }> = {
   open: {
     label: 'Offen',
     color: 'var(--text-muted)',
-    bg: 'var(--bg-raised)',
   },
   practicing: {
     label: 'In Übung',
-    color: 'var(--warning)',
-    bg: 'var(--warning-soft)',
+    color: 'var(--accent-warm)',
   },
   mastered: {
     label: 'Sicher',
     color: 'var(--positive)',
-    bg: 'var(--positive-soft)',
   },
 };
 
@@ -78,6 +69,18 @@ function getLocalTodayIso(): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function formatGermanDate(): string {
+  try {
+    return new Intl.DateTimeFormat('de-CH', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+    }).format(new Date());
+  } catch {
+    return getLocalTodayIso();
+  }
 }
 
 function formatShortDate(dateStr: string): string {
@@ -100,23 +103,19 @@ function getDaysUntilLabel(dateStr: string): { label: string; urgent: boolean } 
   return { label: `In ${diffDays} Tagen`, urgent: diffDays <= 7 };
 }
 
-function getSourceLabel(source: 'ics' | 'manual' | 'smart-import'): string {
-  if (source === 'ics') return 'ICS';
-  if (source === 'smart-import') return 'Import';
-  return 'Manuell';
-}
-
 export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   state,
-  demoMode,
   onNavigate,
   onSelectCourse,
   onTogglePlanTask,
   onSetObjectiveMastery,
   onOpenVoiceTutor,
   onOpenOnboarding,
+  onOpenSettings,
 }) => {
   const [expandAllCourses, setExpandAllCourses] = useState(false);
+
+  const formattedToday = useMemo(() => formatGermanDate(), []);
 
   const activeCourse = useMemo(
     () => state.courses.find((c) => c.id === state.activeCourseId) ?? state.courses[0],
@@ -183,227 +182,265 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   );
 
   const sortedSchedule = useMemo(
-    () =>
-      [...state.schoolSchedule].sort((a, b) => a.date.localeCompare(b.date)),
+    () => [...state.schoolSchedule].sort((a, b) => a.date.localeCompare(b.date)),
     [state.schoolSchedule]
   );
 
+  const hasVoiceKey = Boolean(state.provider.geminiApiKey.trim());
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-10 animate-enter">
-      {/* Header */}
-      <header className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between" style={{ borderColor: 'var(--border-hairline)' }}>
-        <div className="space-y-1.5">
-          <div className="flex flex-wrap items-center gap-2 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-            {activeCourse ? (
-              <span className="inline-flex items-center gap-2">
-                <span
-                  className="inline-block h-2 w-2 rounded-full"
-                  style={{ backgroundColor: activeCourse.accentColor }}
-                />
-                <span>Aktives Fach: {activeCourse.title}</span>
-              </span>
-            ) : (
-              <span>Persönlicher Lernbereich</span>
-            )}
-            {demoMode && (
+    <div className="mx-auto max-w-[1120px] pb-14 animate-enter">
+      {/* Top Editorial Header */}
+      <header
+        className="flex flex-col gap-5 border-b pb-7 sm:flex-row sm:items-end sm:justify-between"
+        style={{ borderColor: 'var(--border-hairline)' }}
+      >
+        <div className="space-y-2">
+          <div
+            className="flex flex-wrap items-center gap-2 text-[13px]"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            <span>{formattedToday}</span>
+            {activeCourse && (
               <>
-                <span style={{ color: 'var(--border-strong)' }}>·</span>
-                <span
-                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[12px] font-medium"
-                  style={{
-                    backgroundColor: 'var(--bg-raised)',
-                    color: 'var(--text-secondary)',
-                    border: '1px solid var(--border-hairline)',
-                  }}
-                >
-                  Demo-Daten aktiv
+                <span aria-hidden="true" style={{ color: 'var(--border-strong)' }}>
+                  ·
                 </span>
-                <button
-                  type="button"
-                  onClick={onOpenOnboarding}
-                  className="inline-flex items-center gap-1 text-[12px] font-medium transition-opacity hover:opacity-80 cursor-pointer"
-                  style={{ color: 'var(--accent)' }}
-                >
-                  <Settings2 size={13} strokeWidth={1.5} />
-                  <span>Einrichten</span>
-                </button>
+                <span className="inline-flex items-center gap-2">
+                  <span
+                    className="inline-block h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: activeCourse.accentColor }}
+                  />
+                  <span>{activeCourse.title}</span>
+                </span>
               </>
             )}
           </div>
           <h1
-            className="text-[26px] font-semibold tracking-tight sm:text-[28px]"
-            style={{ color: 'var(--text-primary)', lineHeight: 1.2 }}
+            className="font-display text-[32px] sm:text-[38px] font-normal leading-[1.12]"
+            style={{ color: 'var(--text-primary)' }}
           >
-            Lernübersicht
+            Heute im Fokus
           </h1>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => onOpenVoiceTutor({ mode: 'explain' })}
-            className="btn-accent"
-          >
-            <Mic size={16} strokeWidth={1.5} />
-            <span>Sprachtutor öffnen</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('focus')}
-            className="btn-secondary"
-          >
-            <Timer size={16} strokeWidth={1.5} />
-            <span>Fokus-Session starten</span>
-          </button>
+        <div className="flex flex-col items-start sm:items-end gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => onNavigate('focus')}
+              className="btn-accent"
+            >
+              <Timer size={15} strokeWidth={1.5} />
+              <span>Fokus starten</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenVoiceTutor({ mode: 'explain' })}
+              className="btn-secondary"
+            >
+              <Mic size={15} strokeWidth={1.5} />
+              <span>Sprachtutor</span>
+            </button>
+          </div>
+          {!hasVoiceKey && (
+            <button
+              type="button"
+              onClick={onOpenOnboarding}
+              className="text-[12.5px] font-medium cursor-pointer transition-colors hover:underline"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              Sprachtutor einrichten
+            </button>
+          )}
         </div>
       </header>
 
-      {/* 4 Numeric Stat Cards */}
-      <section className="grid grid-cols-2 gap-3.5 lg:grid-cols-4" aria-label="Lernkennzahlen">
-        <div className="surface-card p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-              Tagesziel
-            </span>
-            <Target size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
+      {/* Open Hairline Metric Strip (Zero SaaS Stat Cards) */}
+      <section
+        aria-label="Lernstand heute"
+        className="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-5 border-b py-5"
+        style={{ borderColor: 'var(--border-hairline)' }}
+      >
+        {/* 1. Tagesziel */}
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          title="Tagesziel in den Einstellungen anpassen"
+          className="text-left group cursor-pointer"
+        >
+          <div
+            className="text-[12.5px] transition-colors group-hover:text-[var(--text-primary)]"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Tagesziel
           </div>
-          <div className="mt-2.5 flex items-baseline gap-1.5">
-            <span className="font-mono-num text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {metrics.completedMinutesToday} / {state.dailyGoalMinutes}
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span
+              className="font-mono-num text-[23px] font-medium tracking-[-0.02em]"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {metrics.completedMinutesToday}
             </span>
-            <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
-              Min
+            <span
+              className="font-mono-num text-[13.5px]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              / {state.dailyGoalMinutes} Min
             </span>
           </div>
           <div
-            className="mt-3 h-1.5 w-full overflow-hidden rounded-full"
+            className="mt-2.5 h-[3px] w-full max-w-[168px] overflow-hidden rounded-full"
             style={{ backgroundColor: 'var(--bg-raised)' }}
           >
             <div
               className="h-full rounded-full transition-all duration-300"
               style={{
                 width: `${metrics.goalPercent}%`,
-                backgroundColor: 'var(--accent)',
+                backgroundColor: 'var(--accent-warm)',
               }}
             />
           </div>
-        </div>
+        </button>
 
+        {/* 2. Fällige Karten */}
         <button
           type="button"
           onClick={() => onNavigate('trainer')}
-          className="surface-card p-4 text-left transition-colors cursor-pointer"
-          style={{ borderColor: 'var(--border-hairline)' }}
+          className="text-left group cursor-pointer"
         >
-          <div className="flex items-center justify-between">
-            <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-              Fällige Karten
-            </span>
-            <Layers size={16} strokeWidth={1.5} style={{ color: 'var(--text-secondary)' }} />
+          <div
+            className="inline-flex items-center gap-1 text-[12.5px] transition-colors group-hover:text-[var(--accent)]"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <span>Fällige Karten</span>
+            <ArrowUpRight
+              size={13}
+              strokeWidth={1.5}
+              className="opacity-60 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100"
+            />
           </div>
-          <div className="mt-2.5 flex items-baseline gap-2">
-            <span className="font-mono-num text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span
+              className="font-mono-num text-[23px] font-medium tracking-[-0.02em]"
+              style={{ color: 'var(--text-primary)' }}
+            >
               {metrics.dueCardsCount}
             </span>
-            <span className="font-mono-num text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              von {state.cards.length}
-            </span>
           </div>
-          <p className="mt-2.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-            {metrics.dueCardsCount > 0 ? 'Bereit zur Wiederholung' : 'Alle Karten aktuell'}
-          </p>
+          <div
+            className="mt-1 text-[12.5px] transition-colors group-hover:text-[var(--accent)]"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {metrics.dueCardsCount > 0 ? 'bereit zur Wiederholung' : 'alle aktuell'}
+          </div>
         </button>
 
-        <div className="surface-card p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-              Lernziele sicher
-            </span>
-            <CheckCircle2 size={16} strokeWidth={1.5} style={{ color: 'var(--positive)' }} />
+        {/* 3. Lernziele sicher */}
+        <div>
+          <div className="text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+            Lernziele sicher
           </div>
-          <div className="mt-2.5 flex items-baseline gap-1.5">
-            <span className="font-mono-num text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {metrics.masteredObjectives} / {metrics.totalObjectives}
+          <div className="mt-1.5 flex items-baseline gap-1.5">
+            <span
+              className="font-mono-num text-[23px] font-medium tracking-[-0.02em]"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {metrics.masteredObjectives}
+            </span>
+            <span
+              className="font-mono-num text-[13.5px]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              / {metrics.totalObjectives}
             </span>
           </div>
-          <p className="mt-2.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-            Über {state.courses.length} Fächer verteilt
-          </p>
+          <div className="mt-1 text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
+            über {state.courses.length} {state.courses.length === 1 ? 'Fach' : 'Fächer'}
+          </div>
         </div>
 
-        <div className="surface-card p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-              Lern-Streak
-            </span>
-            <Flame size={16} strokeWidth={1.5} style={{ color: 'var(--warning)' }} />
+        {/* 4. Lernserie */}
+        <div>
+          <div className="text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+            Lernserie
           </div>
-          <div className="mt-2.5 flex items-baseline gap-1.5">
-            <span className="font-mono-num text-[22px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              {state.streakDays}
-            </span>
-            <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
-              Tage
-            </span>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span
+              className="h-2 w-2 rounded-full shrink-0"
+              style={{ backgroundColor: 'var(--accent-warm)' }}
+              aria-hidden="true"
+            />
+            <div className="flex items-baseline gap-1.5">
+              <span
+                className="font-mono-num text-[23px] font-medium tracking-[-0.02em]"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                {state.streakDays}
+              </span>
+              <span className="text-[13.5px]" style={{ color: 'var(--text-secondary)' }}>
+                {state.streakDays === 1 ? 'Tag' : 'Tage'}
+              </span>
+            </div>
           </div>
-          <p className="mt-2.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-            <span className="font-mono-num">{state.focusLogs.length}</span> Fokus-Sessions erfasst
-          </p>
+          <div className="mt-1 text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>
+            <span className="font-mono-num">{state.focusLogs.length}</span>{' '}
+            {state.focusLogs.length === 1 ? 'Fokus-Einheit' : 'Fokus-Einheiten'}
+          </div>
         </div>
       </section>
 
-      {/* Main Split Layout */}
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        {/* Left Column */}
-        <div className="space-y-5 xl:col-span-7">
+      {/* Main Editorial Two-Column Canvas */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-10 xl:gap-12 pt-8">
+        {/* Left Editorial Column (7 cols — open canvas, zero nested boxes) */}
+        <div className="xl:col-span-7 space-y-11">
           {/* Heutiger Lernplan */}
-          <section className="surface-card p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Heutiger Lernplan
-                </h2>
-                <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                  <span className="font-mono-num">
-                    {metrics.doneTodayTasks} von {metrics.todayPlanTasks.length}
-                  </span>{' '}
-                  Aufgaben heute erledigt
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onNavigate('focus')}
-                className="btn-ghost"
+          <section aria-labelledby="heading-daily-plan">
+            <div className="flex items-baseline justify-between gap-4">
+              <h2
+                id="heading-daily-plan"
+                className="font-display text-[22px] font-normal leading-snug"
+                style={{ color: 'var(--text-primary)' }}
               >
-                <span>Planer öffnen</span>
-                <ArrowRight size={14} strokeWidth={1.5} />
-              </button>
+                Heutiger Lernplan
+              </h2>
+              <div className="flex items-center gap-3.5">
+                <span
+                  className="font-mono-num text-[12px]"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {metrics.doneTodayTasks} / {metrics.todayPlanTasks.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('focus')}
+                  className="inline-flex items-center gap-1 text-[13px] font-medium cursor-pointer transition-colors hover:text-[var(--accent)]"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  <span>Planer</span>
+                  <ArrowRight size={13} strokeWidth={1.5} />
+                </button>
+              </div>
             </div>
 
-            {/* Progress bar */}
-            <div className="mt-3.5 flex items-center gap-3">
+            {/* Subtle Warm-Orange Progress Line */}
+            <div
+              className="mt-3 h-[2px] w-full overflow-hidden rounded-full"
+              style={{ backgroundColor: 'var(--border-hairline)' }}
+            >
               <div
-                className="h-1.5 flex-1 overflow-hidden rounded-full"
-                style={{ backgroundColor: 'var(--bg-raised)' }}
-              >
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{
-                    width: `${metrics.todayPlanPercent}%`,
-                    backgroundColor: 'var(--positive)',
-                  }}
-                />
-              </div>
-              <span className="font-mono-num text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                {metrics.todayPlanPercent}%
-              </span>
+                className="h-full rounded-full transition-all duration-300"
+                style={{
+                  width: `${metrics.todayPlanPercent}%`,
+                  backgroundColor: 'var(--accent-warm)',
+                }}
+              />
             </div>
 
-            {/* Task rows */}
             {state.dailyPlan.length === 0 ? (
               <div
-                className="mt-4 rounded-xl border border-dashed p-5 text-center"
-                style={{ borderColor: 'var(--border-strong)' }}
+                className="py-7 border-b text-left space-y-3"
+                style={{ borderColor: 'var(--border-hairline)' }}
               >
                 <p className="text-[14px]" style={{ color: 'var(--text-secondary)' }}>
                   Noch keine Lernblöcke für heute geplant.
@@ -411,13 +448,13 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => onNavigate('focus')}
-                  className="btn-secondary mt-3"
+                  className="btn-secondary"
                 >
                   <span>Tagesplan erstellen</span>
                 </button>
               </div>
             ) : (
-              <div className="mt-4 space-y-2">
+              <div>
                 {metrics.todayPlanTasks.map((task) => {
                   const course = courseMap.get(task.courseId);
                   return (
@@ -425,25 +462,24 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                       key={task.id}
                       type="button"
                       onClick={() => onTogglePlanTask(task.id)}
-                      className="flex w-full items-start gap-3 rounded-xl border px-3.5 py-2.5 text-left transition-colors cursor-pointer"
-                      style={{
-                        backgroundColor: task.done ? 'var(--bg-raised)' : 'var(--bg-card)',
-                        borderColor: 'var(--border-hairline)',
-                      }}
+                      className="w-full flex items-start gap-3.5 border-b py-3.5 px-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/35"
+                      style={{ borderColor: 'var(--border-hairline)' }}
                     >
                       <span
-                        className="mt-0.5 flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-[5px] border transition-colors"
+                        className="mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border transition-colors"
                         style={{
-                          backgroundColor: task.done ? 'var(--positive)' : 'transparent',
-                          borderColor: task.done ? 'var(--positive)' : 'var(--border-strong)',
-                          color: '#ffffff',
+                          backgroundColor: task.done ? 'var(--accent)' : 'transparent',
+                          borderColor: task.done ? 'var(--accent)' : 'var(--border-strong)',
+                          color: 'var(--accent-ink)',
                         }}
                       >
-                        {task.done && <Check size={12} strokeWidth={2} />}
+                        {task.done && <Check size={11} strokeWidth={2.2} />}
                       </span>
                       <div className="min-w-0 flex-1">
                         <p
-                          className={`text-[14px] font-medium leading-snug ${task.done ? 'line-through' : ''}`}
+                          className={`text-[14.5px] font-medium leading-snug ${
+                            task.done ? 'line-through' : ''
+                          }`}
                           style={{
                             color: task.done ? 'var(--text-muted)' : 'var(--text-primary)',
                           }}
@@ -451,9 +487,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                           {task.title}
                         </p>
                         {course && (
-                          <div className="mt-1 flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                          <div
+                            className="mt-1 flex items-center gap-1.5 text-[12.5px]"
+                            style={{ color: 'var(--text-muted)' }}
+                          >
                             <span
-                              className="inline-block h-1.5 w-1.5 rounded-full"
+                              className="inline-block h-1.5 w-1.5 rounded-full shrink-0"
                               style={{ backgroundColor: course.accentColor }}
                             />
                             <span className="truncate">{course.title}</span>
@@ -461,11 +500,8 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                         )}
                       </div>
                       <span
-                        className="font-mono-num shrink-0 rounded-md px-2 py-0.5 text-[12px]"
-                        style={{
-                          backgroundColor: 'var(--bg-raised)',
-                          color: 'var(--text-secondary)',
-                        }}
+                        className="font-mono-num shrink-0 pt-0.5 text-[12.5px]"
+                        style={{ color: 'var(--text-muted)' }}
                       >
                         {task.minutes} Min
                       </span>
@@ -474,11 +510,14 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 })}
 
                 {upcomingPlanTasks.length > 0 && (
-                  <div className="pt-2">
-                    <p className="mb-2 text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
+                  <div className="pt-6">
+                    <div
+                      className="pb-1.5 text-[12px] font-medium"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
                       Ausblick
-                    </p>
-                    <div className="space-y-1.5">
+                    </div>
+                    <div>
                       {upcomingPlanTasks.slice(0, 3).map((task) => {
                         const course = courseMap.get(task.courseId);
                         return (
@@ -486,38 +525,49 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                             key={task.id}
                             type="button"
                             onClick={() => onTogglePlanTask(task.id)}
-                            className="flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors cursor-pointer"
-                            style={{
-                              backgroundColor: 'transparent',
-                              borderColor: 'var(--border-hairline)',
-                            }}
+                            className="w-full flex items-center gap-3 border-b py-2.5 px-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/30"
+                            style={{ borderColor: 'var(--border-hairline)' }}
                           >
                             <span
-                              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border"
+                              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors"
                               style={{
-                                backgroundColor: task.done ? 'var(--positive)' : 'transparent',
-                                borderColor: task.done ? 'var(--positive)' : 'var(--border-strong)',
-                                color: '#ffffff',
+                                backgroundColor: task.done ? 'var(--accent)' : 'transparent',
+                                borderColor: task.done
+                                  ? 'var(--accent)'
+                                  : 'var(--border-strong)',
+                                color: 'var(--accent-ink)',
                               }}
                             >
-                              {task.done && <Check size={11} strokeWidth={2} />}
+                              {task.done && <Check size={10} strokeWidth={2.2} />}
                             </span>
                             <span
-                              className={`min-w-0 flex-1 truncate text-[13px] ${task.done ? 'line-through' : ''}`}
-                              style={{ color: task.done ? 'var(--text-muted)' : 'var(--text-secondary)' }}
+                              className={`min-w-0 flex-1 truncate text-[13.5px] ${
+                                task.done ? 'line-through' : ''
+                              }`}
+                              style={{
+                                color: task.done
+                                  ? 'var(--text-muted)'
+                                  : 'var(--text-secondary)',
+                              }}
                             >
                               {task.title}
                             </span>
                             {course && (
                               <span
-                                className="hidden h-1.5 w-1.5 rounded-full sm:inline-block"
+                                className="hidden h-1.5 w-1.5 rounded-full shrink-0 sm:inline-block"
                                 style={{ backgroundColor: course.accentColor }}
                               />
                             )}
-                            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                            <span
+                              className="text-[12px] shrink-0"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
                               {task.scheduledFor}
                             </span>
-                            <span className="font-mono-num text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                            <span
+                              className="font-mono-num text-[12px] shrink-0"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
                               {task.minutes} Min
                             </span>
                           </button>
@@ -531,108 +581,123 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           </section>
 
           {/* Fächer & Lernziele */}
-          <section className="surface-card p-5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Fächer & Lernziele
-                </h2>
-                <p className="mt-0.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                  Fach antippen zum Wechseln, Statuskreis antippen zum Aktualisieren
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5">
+          <section aria-labelledby="heading-courses">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2
+                id="heading-courses"
+                className="font-display text-[22px] font-normal leading-snug"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Fächer & Lernziele
+              </h2>
+              <div className="flex items-center gap-4">
                 <button
                   type="button"
                   onClick={() => setExpandAllCourses((prev) => !prev)}
-                  className="btn-ghost"
+                  className="text-[12.5px] font-medium cursor-pointer transition-colors hover:text-[var(--text-primary)]"
+                  style={{ color: 'var(--text-muted)' }}
                 >
-                  <span>{expandAllCourses ? 'Kompakt' : 'Alle aufklappen'}</span>
+                  {expandAllCourses ? 'Kompakt' : 'Alle öffnen'}
                 </button>
                 <button
                   type="button"
                   onClick={() => onNavigate('notes')}
-                  className="btn-ghost"
+                  className="inline-flex items-center gap-1.5 text-[13px] font-medium cursor-pointer transition-colors hover:text-[var(--accent)]"
+                  style={{ color: 'var(--text-secondary)' }}
                 >
-                  <BookOpen size={14} strokeWidth={1.5} />
+                  <BookOpen size={13} strokeWidth={1.5} />
                   <span>Notizen</span>
                 </button>
               </div>
             </div>
 
-            <div className="mt-4 space-y-3">
+            <div
+              className="mt-3 border-t"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
               {state.courses.map((course) => {
                 const isActive = course.id === activeCourse?.id;
                 const isExpanded = isActive || expandAllCourses;
-                const masteredCount = course.objectives.filter((o) => o.mastery === 'mastered').length;
+                const masteredCount = course.objectives.filter(
+                  (o) => o.mastery === 'mastered'
+                ).length;
                 const totalCount = course.objectives.length;
 
                 return (
                   <div
                     key={course.id}
-                    className="rounded-xl border transition-colors"
-                    style={{
-                      borderColor: isActive ? 'var(--accent-border)' : 'var(--border-hairline)',
-                      backgroundColor: isActive ? 'var(--bg-card)' : 'var(--bg-page)',
-                    }}
+                    className="border-b"
+                    style={{ borderColor: 'var(--border-hairline)' }}
                   >
                     <button
                       type="button"
                       onClick={() => onSelectCourse(course.id)}
-                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left cursor-pointer"
+                      aria-expanded={isExpanded}
+                      className="w-full flex items-center justify-between gap-4 py-4 px-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/30"
                     >
                       <div className="flex min-w-0 items-center gap-2.5">
-                        {isExpanded ? (
-                          <ChevronDown size={15} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
-                        ) : (
-                          <ChevronRight size={15} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
-                        )}
+                        <span
+                          className="shrink-0 flex items-center"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          {isExpanded ? (
+                            <ChevronDown size={15} strokeWidth={1.5} />
+                          ) : (
+                            <ChevronRight size={15} strokeWidth={1.5} />
+                          )}
+                        </span>
                         <span
                           className="h-2.5 w-2.5 shrink-0 rounded-full"
                           style={{ backgroundColor: course.accentColor }}
                         />
                         <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex flex-wrap items-baseline gap-2">
                             <span
-                              className="truncate text-[14px] font-semibold"
-                              style={{ color: 'var(--text-primary)' }}
+                              className="truncate text-[15px] font-medium"
+                              style={{
+                                color: isActive
+                                  ? 'var(--text-primary)'
+                                  : 'var(--text-secondary)',
+                              }}
                             >
                               {course.title}
                             </span>
                             {isActive && (
                               <span
-                                className="rounded-md px-1.5 py-0.5 text-[11px] font-medium"
-                                style={{
-                                  backgroundColor: 'var(--accent-soft)',
-                                  color: 'var(--accent)',
-                                }}
+                                className="text-[12px] font-medium"
+                                style={{ color: 'var(--accent)' }}
                               >
                                 Aktiv
                               </span>
                             )}
                           </div>
                           {!isExpanded && (
-                            <p className="mt-0.5 truncate text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                            <p
+                              className="mt-0.5 truncate text-[12.5px]"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
                               {course.description}
                             </p>
                           )}
                         </div>
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-3">
+                      <div className="flex shrink-0 items-center gap-4">
                         {course.examDate && (
                           <span
-                            className="hidden text-[12px] sm:inline-block"
+                            className="hidden font-mono-num text-[12px] sm:inline-block"
                             style={{ color: 'var(--text-muted)' }}
                           >
                             {formatShortDate(course.examDate)}
                           </span>
                         )}
                         <span
-                          className="font-mono-num rounded-md px-2 py-0.5 text-[12px]"
+                          className="font-mono-num text-[12.5px]"
                           style={{
-                            backgroundColor: 'var(--bg-raised)',
-                            color: 'var(--text-secondary)',
+                            color:
+                              masteredCount === totalCount && totalCount > 0
+                                ? 'var(--positive)'
+                                : 'var(--text-secondary)',
                           }}
                         >
                           {masteredCount} / {totalCount}
@@ -641,67 +706,73 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                     </button>
 
                     {isExpanded && (
-                      <div
-                        className="border-t px-4 py-3 space-y-2"
-                        style={{ borderColor: 'var(--border-hairline)' }}
-                      >
-                        <p className="text-[13px] mb-2.5" style={{ color: 'var(--text-secondary)' }}>
+                      <div className="pb-4 pl-7 pr-1">
+                        <p
+                          className="text-[13px] leading-relaxed mb-3"
+                          style={{ color: 'var(--text-secondary)' }}
+                        >
                           {course.description}
                         </p>
-                        {course.objectives.map((obj) => {
-                          const meta = MASTERY_META[obj.mastery];
-                          const nextState = MASTERY_CYCLE[obj.mastery];
-                          return (
-                            <div
-                              key={obj.id}
-                              className="flex items-start gap-3 rounded-lg px-2.5 py-2 transition-colors"
-                              style={{ backgroundColor: 'var(--bg-page)' }}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => onSetObjectiveMastery(course.id, obj.id, nextState)}
-                                title={`Status ändern zu: ${MASTERY_META[nextState].label}`}
-                                aria-label={`Lernziel ${obj.title}: aktuell ${meta.label}, klicken für ${MASTERY_META[nextState].label}`}
-                                className="mt-0.5 flex shrink-0 items-center justify-center rounded-full p-0.5 transition-transform active:scale-95 cursor-pointer"
-                                style={{ color: meta.color }}
+                        <div>
+                          {course.objectives.map((obj) => {
+                            const meta = MASTERY_META[obj.mastery];
+                            const nextState = MASTERY_CYCLE[obj.mastery];
+                            return (
+                              <div
+                                key={obj.id}
+                                className="flex items-start gap-3 border-t py-3 first:border-t-0"
+                                style={{ borderColor: 'var(--border-hairline)' }}
                               >
-                                {obj.mastery === 'mastered' && (
-                                  <CheckCircle2 size={18} strokeWidth={1.5} />
-                                )}
-                                {obj.mastery === 'practicing' && (
-                                  <CircleDot size={18} strokeWidth={1.5} />
-                                )}
-                                {obj.mastery === 'open' && (
-                                  <Circle size={18} strokeWidth={1.5} />
-                                )}
-                              </button>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <span
-                                    className="text-[14px] font-medium"
-                                    style={{ color: 'var(--text-primary)' }}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onSetObjectiveMastery(course.id, obj.id, nextState)
+                                  }
+                                  title={`Status ändern zu: ${MASTERY_META[nextState].label}`}
+                                  aria-label={`Lernziel ${obj.title}: aktuell ${meta.label}, klicken für ${MASTERY_META[nextState].label}`}
+                                  className="mt-0.5 flex shrink-0 items-center justify-center rounded-full transition-transform active:scale-95 cursor-pointer"
+                                  style={{ color: meta.color }}
+                                >
+                                  {obj.mastery === 'mastered' && (
+                                    <CheckCircle2 size={17} strokeWidth={1.5} />
+                                  )}
+                                  {obj.mastery === 'practicing' && (
+                                    <CircleDot size={17} strokeWidth={1.5} />
+                                  )}
+                                  {obj.mastery === 'open' && (
+                                    <Circle size={17} strokeWidth={1.5} />
+                                  )}
+                                </button>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-baseline justify-between gap-3">
+                                    <span
+                                      className="text-[14px] font-medium leading-snug"
+                                      style={{ color: 'var(--text-primary)' }}
+                                    >
+                                      {obj.title}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onSetObjectiveMastery(course.id, obj.id, nextState)
+                                      }
+                                      className="shrink-0 text-[12px] font-medium cursor-pointer transition-opacity hover:underline"
+                                      style={{ color: meta.color }}
+                                    >
+                                      {meta.label}
+                                    </button>
+                                  </div>
+                                  <p
+                                    className="mt-1 text-[12.5px] leading-relaxed"
+                                    style={{ color: 'var(--text-secondary)' }}
                                   >
-                                    {obj.title}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => onSetObjectiveMastery(course.id, obj.id, nextState)}
-                                    className="rounded-md px-2 py-0.5 text-[11px] font-medium cursor-pointer"
-                                    style={{
-                                      backgroundColor: meta.bg,
-                                      color: meta.color,
-                                    }}
-                                  >
-                                    {meta.label}
-                                  </button>
+                                    {obj.summary}
+                                  </p>
                                 </div>
-                                <p className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                                  {obj.summary}
-                                </p>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -711,71 +782,89 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           </section>
         </div>
 
-        {/* Right Column */}
-        <div className="space-y-5 xl:col-span-5">
-          {/* Nächste Prüfungen */}
-          <section className="surface-card p-5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Calendar size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Nächste Prüfungen
-                </h2>
-              </div>
+        {/* Right Calm Paper Column (5 cols) */}
+        <div className="xl:col-span-5 space-y-9">
+          {/* Nächste Prüfungen — Single Quiet Surface Card */}
+          <section className="surface-card p-6" aria-labelledby="heading-exams">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2
+                id="heading-exams"
+                className="font-display text-[21px] font-normal leading-snug"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Nächste Prüfungen
+              </h2>
               <button
                 type="button"
                 onClick={() => onNavigate('import')}
-                className="btn-ghost"
+                className="text-[12.5px] font-medium cursor-pointer transition-colors hover:text-[var(--accent)]"
+                style={{ color: 'var(--text-secondary)' }}
               >
-                <span>Termine importieren</span>
+                Importieren
               </button>
             </div>
 
             {sortedSchedule.length === 0 ? (
-              <div
-                className="mt-4 rounded-xl border border-dashed p-4 text-center"
-                style={{ borderColor: 'var(--border-strong)' }}
-              >
-                <p className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-                  Noch keine Prüfungstermine hinterlegt.
+              <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border-hairline)' }}>
+                <p className="text-[13.5px]" style={{ color: 'var(--text-secondary)' }}>
+                  Noch keine Prüfungstermine eingetragen.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('import')}
+                  className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium cursor-pointer hover:underline"
+                  style={{ color: 'var(--accent)' }}
+                >
+                  <span>Termine importieren</span>
+                  <ArrowRight size={13} strokeWidth={1.5} />
+                </button>
               </div>
             ) : (
-              <div className="mt-4 space-y-2.5">
+              <div className="mt-4">
                 {sortedSchedule.map((item) => {
                   const countdown = getDaysUntilLabel(item.date);
                   return (
                     <div
                       key={item.id}
-                      className="rounded-xl border p-3.5"
-                      style={{
-                        borderColor: 'var(--border-hairline)',
-                        backgroundColor: 'var(--bg-page)',
-                      }}
+                      className="border-t py-3.5 first:pt-3.5 last:pb-0 flex items-start justify-between gap-4"
+                      style={{ borderColor: 'var(--border-hairline)' }}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-[14px] font-medium leading-snug" style={{ color: 'var(--text-primary)' }}>
-                            {item.title}
-                          </p>
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                            <span>{item.courseTitle}</span>
-                            <span>·</span>
-                            <span className="font-mono-num">{formatShortDate(item.date)}</span>
-                            <span>·</span>
-                            <span>{getSourceLabel(item.source)}</span>
-                          </div>
-                        </div>
-                        <span
-                          className="font-mono-num shrink-0 rounded-md px-2 py-0.5 text-[12px] font-medium"
-                          style={{
-                            backgroundColor: countdown.urgent ? 'var(--warning-soft)' : 'var(--bg-raised)',
-                            color: countdown.urgent ? 'var(--warning)' : 'var(--text-secondary)',
-                          }}
+                      <div className="min-w-0">
+                        <p
+                          className="text-[14px] font-medium leading-snug"
+                          style={{ color: 'var(--text-primary)' }}
                         >
-                          {countdown.label}
-                        </span>
+                          {item.title}
+                        </p>
+                        <div
+                          className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px]"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          <span>{item.courseTitle}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="font-mono-num">
+                            {formatShortDate(item.date)}
+                          </span>
+                        </div>
                       </div>
+                      <span
+                        className="shrink-0 inline-flex items-center gap-1.5 font-mono-num text-[12px] pt-0.5"
+                        style={{
+                          color: countdown.urgent
+                            ? 'var(--accent-warm)'
+                            : 'var(--text-secondary)',
+                          fontWeight: countdown.urgent ? 500 : 400,
+                        }}
+                      >
+                        {countdown.urgent && (
+                          <span
+                            className="h-1.5 w-1.5 rounded-full shrink-0"
+                            style={{ backgroundColor: 'var(--accent-warm)' }}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span>{countdown.label}</span>
+                      </span>
                     </div>
                   );
                 })}
@@ -783,94 +872,182 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             )}
           </section>
 
-          {/* Voice Tutor Quick-Launch */}
-          <section className="surface-card p-5">
-            <div className="flex items-center gap-2">
-              <Mic size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-              <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                Voice Tutor Direktstart
+          {/* Sprechen & Vertiefen — Open Hairline Section */}
+          <section className="px-1" aria-labelledby="heading-voice-quick">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2
+                id="heading-voice-quick"
+                className="font-display text-[21px] font-normal leading-snug"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Sprechen & Vertiefen
               </h2>
-            </div>
-            <p className="mt-1.5 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-              Echtzeit-Gespräch zum aktiven Fach. Wähle direkt zwischen Erklärung, Prüfungs-Simulation oder freiem Sprachtraining.
-            </p>
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-1">
-              <button
-                type="button"
-                onClick={() => onOpenVoiceTutor({ mode: 'explain' })}
-                className="btn-secondary justify-between w-full"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <BookOpen size={15} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                  <span>Konzepte erklären</span>
-                </span>
-                <ArrowRight size={14} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenVoiceTutor({ mode: 'exam' })}
-                className="btn-secondary justify-between w-full"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <GraduationCap size={15} strokeWidth={1.5} style={{ color: 'var(--warning)' }} />
-                  <span>Mündliche Prüfung üben</span>
-                </span>
-                <ArrowRight size={14} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
-              </button>
-              <button
-                type="button"
-                onClick={() => onOpenVoiceTutor({ mode: 'language', language: 'en' })}
-                className="btn-secondary justify-between w-full"
-              >
-                <span className="inline-flex items-center gap-2">
-                  <Languages size={15} strokeWidth={1.5} style={{ color: 'var(--positive)' }} />
-                  <span>Sprach-Coach starten</span>
-                </span>
-                <ArrowRight size={14} strokeWidth={1.5} style={{ color: 'var(--text-muted)' }} />
-              </button>
-            </div>
-          </section>
-
-          {/* Language Coach Quick-Launch */}
-          <section className="surface-card p-5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Languages size={16} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                <h2 className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  Sprachen & Grammatik-Labor
-                </h2>
-              </div>
               <button
                 type="button"
                 onClick={() => onNavigate('languages')}
-                className="btn-ghost"
+                className="inline-flex items-center gap-1 text-[12.5px] font-medium cursor-pointer transition-colors hover:text-[var(--accent)]"
+                style={{ color: 'var(--text-secondary)' }}
               >
-                <span>Öffnen</span>
-                <ArrowRight size={14} strokeWidth={1.5} />
+                <span>Sprachstudio</span>
+                <ArrowRight size={13} strokeWidth={1.5} />
               </button>
             </div>
-            <p className="mt-1.5 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-              Gezielte Grammatik-Drills, KI-Textprüfung und mündliches Training mit striktem Language-Lock.
+            <p
+              className="mt-1 text-[13px] leading-relaxed"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              Direkt im Gespräch zum aktiven Fach oder im geschützten Sprachmodus.
             </p>
-            <div className="mt-3.5 flex flex-wrap gap-2">
-              {QUICK_LANGUAGES.map((lang) => (
-                <button
-                  key={lang.code}
-                  type="button"
-                  onClick={() => onOpenVoiceTutor({ mode: 'language', language: lang.code })}
-                  className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[13px] font-medium transition-colors cursor-pointer"
-                  style={{
-                    backgroundColor: 'var(--bg-page)',
-                    borderColor: 'var(--border-hairline)',
-                    color: 'var(--text-primary)',
-                  }}
-                >
-                  <span className="font-mono-num text-[11px]" style={{ color: 'var(--accent)' }}>
-                    {lang.short}
-                  </span>
-                  <span>{lang.label}</span>
-                </button>
-              ))}
+
+            <div
+              className="mt-4 border-t"
+              style={{ borderColor: 'var(--border-hairline)' }}
+            >
+              <button
+                type="button"
+                onClick={() => onOpenVoiceTutor({ mode: 'explain' })}
+                className="w-full flex items-center justify-between gap-3 border-b py-3.5 px-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/35 group"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <BookOpen
+                    size={16}
+                    strokeWidth={1.5}
+                    className="mt-0.5 shrink-0"
+                    style={{ color: 'var(--accent)' }}
+                  />
+                  <div className="min-w-0">
+                    <div
+                      className="text-[14px] font-medium"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      Thema erklären lassen
+                    </div>
+                    <div
+                      className="text-[12.5px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      Schrittweise mit Rückfragen verstehen
+                    </div>
+                  </div>
+                </div>
+                <ArrowRight
+                  size={14}
+                  strokeWidth={1.5}
+                  className="shrink-0 transition-transform group-hover:translate-x-0.5"
+                  style={{ color: 'var(--text-muted)' }}
+                />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onOpenVoiceTutor({ mode: 'exam' })}
+                className="w-full flex items-center justify-between gap-3 border-b py-3.5 px-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/35 group"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <GraduationCap
+                    size={16}
+                    strokeWidth={1.5}
+                    className="mt-0.5 shrink-0"
+                    style={{ color: 'var(--accent-warm)' }}
+                  />
+                  <div className="min-w-0">
+                    <div
+                      className="text-[14px] font-medium"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      Mündliche Prüfung üben
+                    </div>
+                    <div
+                      className="text-[12.5px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      Realistische Fragen mit kurzem Feedback
+                    </div>
+                  </div>
+                </div>
+                <ArrowRight
+                  size={14}
+                  strokeWidth={1.5}
+                  className="shrink-0 transition-transform group-hover:translate-x-0.5"
+                  style={{ color: 'var(--text-muted)' }}
+                />
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenVoiceTutor({ mode: 'language', language: state.voice.languageLock })
+                }
+                className="w-full flex items-center justify-between gap-3 border-b py-3.5 px-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-hover)]/35 group"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <MessageCircle
+                    size={16}
+                    strokeWidth={1.5}
+                    className="mt-0.5 shrink-0"
+                    style={{ color: 'var(--accent)' }}
+                  />
+                  <div className="min-w-0">
+                    <div
+                      className="text-[14px] font-medium"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      Freie Konversation
+                    </div>
+                    <div
+                      className="text-[12.5px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      Flüssig sprechen im gewählten Sprachmodus
+                    </div>
+                  </div>
+                </div>
+                <ArrowRight
+                  size={14}
+                  strokeWidth={1.5}
+                  className="shrink-0 transition-transform group-hover:translate-x-0.5"
+                  style={{ color: 'var(--text-muted)' }}
+                />
+              </button>
+            </div>
+
+            {/* Compact 5-Language Row */}
+            <div className="mt-5">
+              <div
+                className="mb-2.5 text-[12px]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                Sprachmodus direkt öffnen
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {QUICK_LANGUAGES.map((lang) => {
+                  const locked = state.voice.languageLock === lang.code;
+                  return (
+                    <button
+                      key={lang.code}
+                      type="button"
+                      onClick={() =>
+                        onOpenVoiceTutor({ mode: 'language', language: lang.code })
+                      }
+                      title={`${lang.label} im Sprachtutor starten`}
+                      aria-label={`${lang.label} im Sprachtutor starten`}
+                      className="h-8 px-3 rounded-full border font-mono-num text-[12px] font-medium cursor-pointer transition-colors hover:border-[var(--border-strong)]"
+                      style={{
+                        backgroundColor: locked ? 'var(--accent-soft)' : 'transparent',
+                        borderColor: locked
+                          ? 'var(--accent-border)'
+                          : 'var(--border-hairline)',
+                        color: locked ? 'var(--accent)' : 'var(--text-secondary)',
+                      }}
+                    >
+                      {lang.short}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </section>
         </div>

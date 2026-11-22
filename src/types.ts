@@ -6,6 +6,13 @@ export type MainView =
   | 'focus'
   | 'import';
 
+export type ColorSchemeId =
+  | 'focus-cream'
+  | 'midnight-teal'
+  | 'terracotta-paper'
+  | 'botanical-sage'
+  | 'espresso-ember';
+
 export type TutorMode = 'explain' | 'exam' | 'language';
 export type AgentStance = 'coach' | 'assistant';
 export type ResponseDepth = 'concise' | 'indepth';
@@ -142,6 +149,7 @@ export interface SchoolScheduleItem {
 export interface OpenStudyState {
   onboardingDone: boolean;
   theme: 'light' | 'dark';
+  colorScheme: ColorSchemeId;
   dailyGoalMinutes: number;
   streakDays: number;
   activeCourseId: string;

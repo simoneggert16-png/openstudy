@@ -241,7 +241,7 @@ export function VoiceTutorDrawer({
   const handleStartCall = useCallback(async () => {
     if (!provider.geminiApiKey.trim()) {
       setErrorMessage(
-        'Füge zuerst deinen kostenlosen Google AI Studio API-Key ein, um das Sprachgespräch zu starten.'
+        'Füge zuerst deinen Google AI Studio Schlüssel ein, um das Sprachgespräch zu starten.'
       );
       return;
     }
@@ -411,7 +411,7 @@ export function VoiceTutorDrawer({
         return;
       }
       if (!hasApiKey) {
-        setErrorMessage('Hinterlege zuerst einen kostenlosen Google AI Studio API-Key, um den Impuls zu starten.');
+        setErrorMessage('Hinterlege zuerst deinen Google AI Studio Schlüssel, um den Impuls zu starten.');
         return;
       }
       if (connectionState !== 'connecting') {
@@ -452,15 +452,17 @@ export function VoiceTutorDrawer({
       : 'Bereit für Sprachgespräch';
 
   const statusBadgeColor = isLive
-    ? 'var(--positive)'
+    ? 'var(--accent-warm)'
     : isConnecting
-      ? 'var(--warning)'
+      ? 'var(--accent-warm)'
       : connectionState === 'error'
         ? 'var(--negative)'
         : 'var(--text-muted)';
 
   const statusBadgeLabel = isLive
-    ? 'Live'
+    ? speakerSpeaking
+      ? 'Spricht'
+      : 'Live'
     : isConnecting
       ? 'Verbindet'
       : connectionState === 'error'
@@ -472,13 +474,13 @@ export function VoiceTutorDrawer({
       {/* Minimized Active Call Floating Pill when drawer is closed while connected/connecting */}
       {!open && (isLive || isConnecting) && (
         <div
-          className="surface-card fixed bottom-5 right-5 z-50 flex items-center gap-3 px-3.5 py-2.5 animate-enter"
+          className="surface-card fixed bottom-5 right-5 z-50 flex items-center gap-3 px-4 py-2.5 animate-enter"
           style={{
-            borderColor: 'var(--accent-border)',
+            borderColor: isLive ? 'var(--accent-warm-border)' : 'var(--border-strong)',
             boxShadow: 'var(--shadow-md)',
           }}
           role="region"
-          aria-label="Aktives Voice-Tutor-Gespräch"
+          aria-label="Aktives Sprachtutor-Gespräch"
         >
           <button
             type="button"
@@ -488,7 +490,7 @@ export function VoiceTutorDrawer({
           >
             <span
               className="inline-block h-2 w-2 rounded-full shrink-0"
-              style={{ backgroundColor: isLive ? 'var(--positive)' : 'var(--warning)' }}
+              style={{ backgroundColor: 'var(--accent-warm)' }}
             />
             <div className="flex items-end gap-[2px] h-4 w-5" aria-hidden="true">
               {[1, 4, 7, 10].map((barIdx) => {
@@ -500,10 +502,10 @@ export function VoiceTutorDrawer({
                     style={{
                       height: `${Math.max(20, Math.round(val * 100))}%`,
                       backgroundColor: speakerSpeaking
-                        ? 'var(--accent)'
+                        ? 'var(--accent-warm)'
                         : muted
                           ? 'var(--text-muted)'
-                          : 'var(--positive)',
+                          : 'var(--accent)',
                     }}
                   />
                 );
@@ -511,7 +513,7 @@ export function VoiceTutorDrawer({
             </div>
             <div className="flex flex-col leading-tight">
               <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                Voice Tutor · {isLive ? 'Live' : 'Verbindet'}
+                Sprachtutor · {isLive ? 'Live' : 'Verbindet'}
               </span>
               <span className="text-[11px] flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
                 <span className="font-mono-num">{formatDuration(elapsedSeconds)}</span>
@@ -537,8 +539,8 @@ export function VoiceTutorDrawer({
                 className="btn-ghost"
                 style={{
                   padding: '0 8px',
-                  color: muted ? 'var(--warning)' : 'var(--text-primary)',
-                  backgroundColor: muted ? 'var(--warning-soft)' : 'transparent',
+                  color: muted ? 'var(--accent-warm)' : 'var(--text-primary)',
+                  backgroundColor: muted ? 'var(--accent-warm-soft)' : 'transparent',
                 }}
                 title={muted ? 'Mikrofon aktivieren' : 'Stummschalten'}
                 aria-label={muted ? 'Mikrofon aktivieren' : 'Stummschalten'}
@@ -552,7 +554,7 @@ export function VoiceTutorDrawer({
               className="btn-ghost"
               style={{ padding: '0 8px' }}
               title="Drawer öffnen"
-              aria-label="Voice Tutor öffnen"
+              aria-label="Sprachtutor öffnen"
             >
               <Maximize2 size={15} strokeWidth={1.5} />
             </button>
@@ -578,7 +580,7 @@ export function VoiceTutorDrawer({
       {open && (
         <div
           className="fixed inset-0 z-40 transition-opacity duration-200"
-          style={{ backgroundColor: 'rgba(15, 16, 17, 0.28)' }}
+          style={{ backgroundColor: 'rgba(24, 36, 34, 0.24)' }}
           onClick={() => onOpenChange(false)}
           aria-hidden="true"
         />
@@ -588,9 +590,9 @@ export function VoiceTutorDrawer({
       <aside
         role="dialog"
         aria-modal="false"
-        aria-label="Voice Tutor"
+        aria-label="Sprachtutor"
         aria-hidden={!open}
-        className={`fixed top-0 right-0 z-50 h-full w-full sm:w-[432px] flex flex-col transition-transform duration-200 ${
+        className={`fixed top-0 right-0 z-50 h-full w-full sm:w-[440px] flex flex-col transition-transform duration-200 ${
           open ? 'translate-x-0 pointer-events-auto' : 'translate-x-full pointer-events-none'
         }`}
         style={{
@@ -602,36 +604,40 @@ export function VoiceTutorDrawer({
       >
         {/* Header */}
         <header
-          className="flex items-start justify-between gap-3 px-4 py-3.5 shrink-0"
-          style={{ borderBottom: '1px solid var(--border-hairline)' }}
+          className="flex items-start justify-between gap-3 px-5 py-4 shrink-0"
+          style={{
+            borderBottom: '1px solid var(--border-hairline)',
+            backgroundColor: 'var(--bg-card)',
+          }}
         >
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-[16px] font-semibold tracking-tight m-0" style={{ color: 'var(--text-primary)' }}>
-                Voice Tutor
+            <div className="flex items-center gap-2.5">
+              <h2
+                className="font-display font-normal text-[23px] leading-none m-0"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Sprachtutor
               </h2>
               <span
-                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-medium"
-                style={{
-                  backgroundColor: isLive
-                    ? 'var(--positive-soft)'
-                    : isConnecting
-                      ? 'var(--warning-soft)'
-                      : connectionState === 'error'
-                        ? 'var(--negative-soft)'
-                        : 'var(--bg-raised)',
-                  color: statusBadgeColor,
-                }}
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium"
+                style={{ color: statusBadgeColor }}
               >
                 <span
-                  className="inline-block h-1.5 w-1.5 rounded-full"
-                  style={{ backgroundColor: statusBadgeColor }}
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{
+                    backgroundColor:
+                      isLive || speakerSpeaking || isConnecting
+                        ? 'var(--accent-warm)'
+                        : connectionState === 'error'
+                          ? 'var(--negative)'
+                          : 'var(--border-strong)',
+                  }}
                 />
                 {statusBadgeLabel}
               </span>
               {activeModel && (
                 <span
-                  className="font-mono-num text-[11px] truncate max-w-[135px]"
+                  className="font-mono-num text-[11px] truncate max-w-[130px]"
                   style={{ color: 'var(--text-muted)' }}
                   title={activeModel}
                 >
@@ -640,15 +646,15 @@ export function VoiceTutorDrawer({
               )}
             </div>
 
-            <div className="mt-1 flex items-center gap-1.5 text-[12px] truncate" style={{ color: 'var(--text-secondary)' }}>
+            <div className="mt-1.5 flex items-center gap-1.5 text-[12px] truncate" style={{ color: 'var(--text-secondary)' }}>
               <span className="truncate">{activeCourse ? activeCourse.title : currentViewLabel}</span>
-              <span style={{ color: 'var(--text-muted)' }}>·</span>
+              <span style={{ color: 'var(--border-strong)' }}>·</span>
               <span className="shrink-0 font-mono-num">
                 {localCourseNotes.length} {localCourseNotes.length === 1 ? 'Notiz' : 'Notizen'}
               </span>
               {selectedObsidianCount > 0 && (
                 <>
-                  <span style={{ color: 'var(--text-muted)' }}>·</span>
+                  <span style={{ color: 'var(--border-strong)' }}>·</span>
                   <span className="shrink-0 font-mono-num">{selectedObsidianCount} Obsidian</span>
                 </>
               )}
@@ -672,40 +678,40 @@ export function VoiceTutorDrawer({
               className="btn-ghost"
               style={{ padding: '0 8px' }}
               title={isLive ? 'Minimieren (Gespräch läuft weiter)' : 'Schliessen'}
-              aria-label="Voice Tutor schliessen"
+              aria-label="Sprachtutor schliessen"
             >
               <X size={16} strokeWidth={1.5} />
             </button>
           </div>
         </header>
 
-        {/* Scrollable Controls + API Key Notice */}
+        {/* Scrollable Controls + API Key Notice (flat hairline sections on warm paper) */}
         <div
-          className="px-4 py-3 space-y-3 shrink-0 overflow-y-auto max-h-[54vh]"
+          className="px-5 py-3.5 space-y-3.5 shrink-0 overflow-y-auto max-h-[56vh]"
           style={{
             borderBottom: '1px solid var(--border-hairline)',
-            backgroundColor: 'var(--bg-page)',
+            backgroundColor: 'var(--bg-card)',
           }}
         >
-          {/* Friendly 60-Second API Key Prompt when no Gemini key is set */}
+          {/* Calm API Key Prompt when no Gemini key is set */}
           {!hasApiKey && (
             <div
-              className="surface-raised p-3 space-y-2.5"
-              style={{ borderColor: 'var(--accent-border)' }}
+              className="border-l-2 pl-3.5 py-0.5 space-y-2.5"
+              style={{ borderColor: 'var(--accent-warm)' }}
             >
-              <div className="flex items-start gap-2.5">
+              <div className="flex items-start gap-2">
                 <KeyRound
-                  size={16}
+                  size={15}
                   strokeWidth={1.5}
                   className="shrink-0 mt-0.5"
-                  style={{ color: 'var(--accent)' }}
+                  style={{ color: 'var(--accent-warm)' }}
                 />
                 <div className="min-w-0 space-y-1">
                   <p className="text-[13px] font-medium m-0" style={{ color: 'var(--text-primary)' }}>
-                    Kostenloser Google AI Studio Key in 60 Sekunden
+                    Google AI Studio Schlüssel verbinden
                   </p>
                   <p className="text-[12px] m-0 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                    Für Echtzeit-Sprachgespräche nutzt OpenStudy das kostenlose Gemini Free Tier direkt aus deinem Browser. Probehören funktioniert bereits jetzt.
+                    Für Echtzeit-Sprachgespräche benötigt OpenStudy deinen persönlichen Google AI Studio Schlüssel direkt im Browser. Alle Stimmen lassen sich bereits vorab probehören.
                   </p>
                 </div>
               </div>
@@ -715,10 +721,10 @@ export function VoiceTutorDrawer({
                   type="password"
                   value={inlineKeyInput}
                   onChange={(e) => setInlineKeyInput(e.target.value)}
-                  placeholder="AIza... API-Key einfügen"
+                  placeholder="AIza... Schlüssel einfügen"
                   className="flex-1 h-8 px-2.5 rounded-lg text-[13px]"
                   style={{
-                    backgroundColor: 'var(--bg-card)',
+                    backgroundColor: 'var(--bg-page)',
                     border: '1px solid var(--border-strong)',
                     color: 'var(--text-primary)',
                   }}
@@ -730,7 +736,7 @@ export function VoiceTutorDrawer({
                   style={{
                     height: 32,
                     padding: '0 12px',
-                    fontSize: 13,
+                    fontSize: 12.5,
                     opacity: inlineKeyInput.trim() ? 1 : 0.55,
                   }}
                 >
@@ -738,7 +744,7 @@ export function VoiceTutorDrawer({
                 </button>
               </form>
 
-              <div className="flex items-center justify-between gap-2 pt-0.5">
+              <div className="flex items-center justify-between gap-2">
                 <a
                   href="https://aistudio.google.com/apikey"
                   target="_blank"
@@ -762,17 +768,17 @@ export function VoiceTutorDrawer({
             </div>
           )}
 
-          {/* Collapsible Tuning Controls */}
+          {/* Collapsible Tuning Controls (flat hairline-divided rows) */}
           {!controlsCollapsed && (
-            <div className="space-y-2.5">
+            <div className="divide-y" style={{ borderColor: 'var(--border-hairline)' }}>
               {/* Row 1: Mode Tabs + Stance Toggle */}
-              <div className="flex items-center gap-2">
+              <div
+                className="flex items-center gap-2 pb-3"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
                 <div
-                  className="flex-1 grid grid-cols-3 p-0.5 rounded-lg"
-                  style={{
-                    backgroundColor: 'var(--bg-raised)',
-                    border: '1px solid var(--border-hairline)',
-                  }}
+                  className="flex-1 grid grid-cols-3 p-0.5 rounded-full"
+                  style={{ backgroundColor: 'var(--bg-raised)' }}
                   role="tablist"
                   aria-label="Tutor-Modus"
                 >
@@ -786,14 +792,13 @@ export function VoiceTutorDrawer({
                         role="tab"
                         aria-selected={active}
                         onClick={() => handleVoiceSettingChange({ mode: m.id }, true)}
-                        className="flex items-center justify-center gap-1.5 h-7 rounded-md text-[12px] font-medium transition-colors cursor-pointer"
+                        className="flex items-center justify-center gap-1.5 h-7 rounded-full text-[12px] font-medium transition-colors cursor-pointer"
                         style={{
                           backgroundColor: active ? 'var(--bg-card)' : 'transparent',
                           color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                          border: active ? '1px solid var(--border-hairline)' : '1px solid transparent',
                         }}
                       >
-                        <Icon size={14} strokeWidth={1.5} />
+                        <Icon size={13} strokeWidth={1.5} />
                         <span className="truncate">{m.label}</span>
                       </button>
                     );
@@ -802,11 +807,8 @@ export function VoiceTutorDrawer({
 
                 {/* Stance toggle: Coach vs Assistenz */}
                 <div
-                  className="inline-flex p-0.5 rounded-lg shrink-0"
-                  style={{
-                    backgroundColor: 'var(--bg-raised)',
-                    border: '1px solid var(--border-hairline)',
-                  }}
+                  className="inline-flex p-0.5 rounded-full shrink-0"
+                  style={{ backgroundColor: 'var(--bg-raised)' }}
                   role="group"
                   aria-label="Haltung des Tutors"
                 >
@@ -822,11 +824,10 @@ export function VoiceTutorDrawer({
                         key={item.id}
                         type="button"
                         onClick={() => handleVoiceSettingChange({ stance: item.id }, true)}
-                        className="h-7 px-2 rounded-md text-[12px] font-medium transition-colors cursor-pointer"
+                        className="h-7 px-2.5 rounded-full text-[12px] font-medium transition-colors cursor-pointer"
                         style={{
-                          backgroundColor: active ? 'var(--accent-soft)' : 'transparent',
+                          backgroundColor: active ? 'var(--bg-card)' : 'transparent',
                           color: active ? 'var(--accent)' : 'var(--text-secondary)',
-                          border: active ? '1px solid var(--accent-border)' : '1px solid transparent',
                         }}
                         title={
                           item.id === 'coach'
@@ -843,13 +844,13 @@ export function VoiceTutorDrawer({
 
               {/* Row 2: Language-Lock Bar */}
               <div
-                className="surface-card px-2.5 py-2 space-y-2"
-                style={{ borderRadius: 10, boxShadow: 'none' }}
+                className="py-3 space-y-2"
+                style={{ borderColor: 'var(--border-hairline)' }}
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <Lock size={14} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
-                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                    <Lock size={13} strokeWidth={1.5} style={{ color: 'var(--accent)' }} />
+                    <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
                       Sprach-Sperre
                     </span>
                   </div>
@@ -862,11 +863,10 @@ export function VoiceTutorDrawer({
                           key={lang}
                           type="button"
                           onClick={() => handleVoiceSettingChange({ languageLock: lang }, true)}
-                          className="h-6 px-2 rounded-md text-[12px] font-medium transition-colors cursor-pointer"
+                          className="h-6 px-2 rounded-full text-[12px] font-mono-num font-medium transition-colors cursor-pointer"
                           style={{
-                            backgroundColor: active ? 'var(--accent)' : 'var(--bg-raised)',
+                            backgroundColor: active ? 'var(--accent)' : 'transparent',
                             color: active ? 'var(--accent-ink)' : 'var(--text-secondary)',
-                            border: '1px solid transparent',
                           }}
                           title={`Strikt auf ${LANGUAGE_META[lang].nameDe} fixieren`}
                         >
@@ -877,22 +877,19 @@ export function VoiceTutorDrawer({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between gap-2 pt-0.5">
+                <div className="flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() =>
                       handleVoiceSettingChange({ bilingualCoach: !voice.bilingualCoach }, true)
                     }
-                    className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md text-[12px] font-medium transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[12px] font-medium transition-colors cursor-pointer"
                     style={{
-                      backgroundColor: voice.bilingualCoach ? 'var(--accent-soft)' : 'var(--bg-raised)',
+                      backgroundColor: voice.bilingualCoach ? 'var(--accent-soft)' : 'var(--bg-page)',
                       color: voice.bilingualCoach ? 'var(--accent)' : 'var(--text-secondary)',
-                      border: voice.bilingualCoach
-                        ? '1px solid var(--accent-border)'
-                        : '1px solid var(--border-hairline)',
                     }}
                   >
-                    <ArrowLeftRight size={13} strokeWidth={1.5} />
+                    <ArrowLeftRight size={12} strokeWidth={1.5} />
                     <span>Zweisprachig</span>
                   </button>
 
@@ -908,9 +905,9 @@ export function VoiceTutorDrawer({
                           )
                         }
                         aria-label="Erklärsprache"
-                        className="h-6 px-1.5 rounded-md text-[12px] font-medium cursor-pointer"
+                        className="h-6 px-2 rounded-md text-[12px] font-medium cursor-pointer"
                         style={{
-                          backgroundColor: 'var(--bg-raised)',
+                          backgroundColor: 'var(--bg-page)',
                           border: '1px solid var(--border-hairline)',
                           color: 'var(--text-primary)',
                         }}
@@ -923,7 +920,7 @@ export function VoiceTutorDrawer({
                       </select>
                     </div>
                   ) : (
-                    <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-[11.5px] truncate" style={{ color: 'var(--text-muted)' }}>
                       Kein Sprachwechsel trotz Akzent
                     </span>
                   )}
@@ -931,15 +928,12 @@ export function VoiceTutorDrawer({
               </div>
 
               {/* Row 3: Tempo & Tiefe */}
-              <div className="flex items-center gap-1.5">
-                <div
-                  className="flex-1 flex items-center justify-between gap-1 px-2 py-1.5 rounded-[10px] min-w-0"
-                  style={{
-                    backgroundColor: 'var(--bg-card)',
-                    border: '1px solid var(--border-hairline)',
-                  }}
-                >
-                  <span className="inline-flex items-center gap-1 text-[11px] font-medium shrink-0" style={{ color: 'var(--text-secondary)' }}>
+              <div
+                className="py-3 flex flex-wrap items-center justify-between gap-2"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                     <Gauge size={13} strokeWidth={1.5} />
                     Tempo
                   </span>
@@ -951,13 +945,10 @@ export function VoiceTutorDrawer({
                           key={p.id}
                           type="button"
                           onClick={() => handlePaceChange(p.id)}
-                          className="h-6 px-1.5 rounded-md text-[11px] font-medium whitespace-nowrap transition-colors cursor-pointer"
+                          className="h-6 px-2 rounded-full text-[11.5px] font-medium whitespace-nowrap transition-colors cursor-pointer"
                           style={{
                             backgroundColor: active ? 'var(--bg-raised)' : 'transparent',
                             color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                            border: active
-                              ? '1px solid var(--border-strong)'
-                              : '1px solid transparent',
                           }}
                           title={`${p.label} (${PACE_PLAYBACK_RATE[p.id]}x)`}
                         >
@@ -968,14 +959,8 @@ export function VoiceTutorDrawer({
                   </div>
                 </div>
 
-                <div
-                  className="flex items-center gap-0.5 px-2 py-1.5 rounded-[10px] shrink-0"
-                  style={{
-                    backgroundColor: 'var(--bg-card)',
-                    border: '1px solid var(--border-hairline)',
-                  }}
-                >
-                  <Layers size={13} strokeWidth={1.5} className="shrink-0 mr-0.5" style={{ color: 'var(--text-secondary)' }} />
+                <div className="flex items-center gap-1">
+                  <Layers size={13} strokeWidth={1.5} style={{ color: 'var(--text-secondary)' }} />
                   {(
                     [
                       { id: 'concise', label: 'Kurz' },
@@ -988,13 +973,10 @@ export function VoiceTutorDrawer({
                         key={d.id}
                         type="button"
                         onClick={() => handleDepthChange(d.id)}
-                        className="h-6 px-2 rounded-md text-[11px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                        className="h-6 px-2.5 rounded-full text-[11.5px] font-medium whitespace-nowrap shrink-0 transition-colors cursor-pointer"
                         style={{
                           backgroundColor: active ? 'var(--accent-soft)' : 'transparent',
                           color: active ? 'var(--accent)' : 'var(--text-muted)',
-                          border: active
-                            ? '1px solid var(--accent-border)'
-                            : '1px solid transparent',
                         }}
                       >
                         {d.label}
@@ -1006,13 +988,10 @@ export function VoiceTutorDrawer({
 
               {/* Row 4: Voice Selector + Real Probehören + Expandable Catalog */}
               <div
-                className="rounded-[10px] overflow-hidden"
-                style={{
-                  backgroundColor: 'var(--bg-card)',
-                  border: '1px solid var(--border-hairline)',
-                }}
+                className="pt-3"
+                style={{ borderColor: 'var(--border-hairline)' }}
               >
-                <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => setVoiceListOpen((v) => !v)}
@@ -1022,14 +1001,14 @@ export function VoiceTutorDrawer({
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                        <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                           Stimme
                         </span>
-                        <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                        <span className="text-[13.5px] font-medium" style={{ color: 'var(--text-primary)' }}>
                           {activeVoiceMeta.label}
                         </span>
                       </div>
-                      <p className="text-[11px] m-0 truncate" style={{ color: 'var(--text-muted)' }}>
+                      <p className="text-[11.5px] m-0 truncate" style={{ color: 'var(--text-secondary)' }}>
                         {activeVoiceMeta.tone}
                       </p>
                     </div>
@@ -1048,22 +1027,22 @@ export function VoiceTutorDrawer({
                     className="btn-secondary shrink-0"
                     style={{
                       height: 30,
-                      padding: '0 10px',
+                      padding: '0 11px',
                       fontSize: 12,
                       color:
                         previewingVoiceId === voice.voiceName
-                          ? 'var(--accent)'
+                          ? 'var(--accent-warm)'
                           : 'var(--text-primary)',
                       borderColor:
                         previewingVoiceId === voice.voiceName
-                          ? 'var(--accent-border)'
+                          ? 'var(--accent-warm-border)'
                           : 'var(--border-hairline)',
                     }}
                     title="Aktuelle Stimme probehören"
                   >
                     {previewingVoiceId === voice.voiceName ? (
                       <>
-                        <Square size={13} strokeWidth={1.5} />
+                        <Square size={12} strokeWidth={1.5} />
                         Stopp
                       </>
                     ) : (
@@ -1077,11 +1056,8 @@ export function VoiceTutorDrawer({
 
                 {voiceListOpen && (
                   <div
-                    className="px-2 py-1.5 space-y-1"
-                    style={{
-                      borderTop: '1px solid var(--border-hairline)',
-                      backgroundColor: 'var(--bg-page)',
-                    }}
+                    className="mt-2.5 divide-y border-t"
+                    style={{ borderColor: 'var(--border-hairline)' }}
                   >
                     {VOICE_CATALOG.map((item) => {
                       const selected = item.id === voice.voiceName;
@@ -1089,18 +1065,13 @@ export function VoiceTutorDrawer({
                       return (
                         <div
                           key={item.id}
-                          className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg transition-colors"
-                          style={{
-                            backgroundColor: selected ? 'var(--accent-soft)' : 'transparent',
-                            border: selected
-                              ? '1px solid var(--accent-border)'
-                              : '1px solid transparent',
-                          }}
+                          className="flex items-center justify-between gap-2 py-2"
+                          style={{ borderColor: 'var(--border-hairline)' }}
                         >
                           <button
                             type="button"
                             onClick={() => handleVoiceSettingChange({ voiceName: item.id }, true)}
-                            className="flex-1 flex items-center gap-2 min-w-0 text-left cursor-pointer"
+                            className="flex-1 flex items-center gap-2.5 min-w-0 text-left cursor-pointer"
                             style={{ background: 'transparent', border: 'none', padding: 0 }}
                           >
                             <span
@@ -1110,13 +1081,16 @@ export function VoiceTutorDrawer({
                                 color: selected ? 'var(--accent-ink)' : 'transparent',
                               }}
                             >
-                              <Check size={11} strokeWidth={2} />
+                              <Check size={10} strokeWidth={2} />
                             </span>
                             <div className="min-w-0">
-                              <div className="text-[13px] font-medium leading-tight" style={{ color: 'var(--text-primary)' }}>
+                              <div
+                                className="text-[13px] font-medium leading-tight"
+                                style={{ color: selected ? 'var(--accent)' : 'var(--text-primary)' }}
+                              >
                                 {item.label}
                               </div>
-                              <div className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                              <div className="text-[11.5px] truncate" style={{ color: 'var(--text-secondary)' }}>
                                 {item.tone}
                               </div>
                             </div>
@@ -1130,8 +1104,7 @@ export function VoiceTutorDrawer({
                               height: 26,
                               padding: '0 8px',
                               fontSize: 12,
-                              color: isPlayingThis ? 'var(--accent)' : 'var(--text-secondary)',
-                              backgroundColor: isPlayingThis ? 'var(--bg-card)' : 'transparent',
+                              color: isPlayingThis ? 'var(--accent-warm)' : 'var(--text-secondary)',
                             }}
                             title={`${item.label} probehören`}
                             aria-label={`${item.label} probehören`}
@@ -1155,180 +1128,190 @@ export function VoiceTutorDrawer({
           {/* Reconnect cue if voice/language/mode changed mid-call */}
           {needsReconnect && isLive && (
             <div
-              className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-[12px]"
+              className="flex items-center justify-between gap-2 border-l-2 py-1 pl-3 text-[12px]"
               style={{
-                backgroundColor: 'var(--warning-soft)',
-                color: 'var(--warning)',
+                borderColor: 'var(--accent-warm)',
+                color: 'var(--accent-warm)',
               }}
             >
               <span>Neue Sprach- oder Modus-Optionen aktivieren</span>
               <button
                 type="button"
                 onClick={() => void handleStartCall()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[12px] font-medium cursor-pointer"
-                style={{
-                  backgroundColor: 'var(--bg-card)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--border-hairline)',
-                }}
+                className="btn-secondary"
+                style={{ height: 26, padding: '0 10px', fontSize: 12 }}
               >
                 <RefreshCw size={12} strokeWidth={1.5} />
                 Neu verbinden
               </button>
             </div>
           )}
+        </div>
 
-          {/* Real 12-Bar Audio Telemetry Strip & Primary Call Controls */}
-          <div
-            className="surface-card p-3 space-y-2.5"
-            style={{ borderRadius: 12, boxShadow: 'none' }}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                  {telemetryStatusLabel}
-                </div>
-                <div className="text-[11px] flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-                  <span>{LANGUAGE_META[voice.languageLock].nameDe}</span>
-                  <span>·</span>
-                  <span className="font-mono-num">{PACE_PLAYBACK_RATE[voice.pace]}x</span>
-                  <span>·</span>
-                  <span>{voice.depth === 'indepth' ? 'In Depth' : 'Kurz'}</span>
-                </div>
-              </div>
-
-              {/* 12-Bar Real Telemetry Meter */}
-              <div className="flex items-center gap-2.5 shrink-0">
-                <div
-                  className="flex items-end gap-[3px] h-7 px-1"
-                  aria-label="Live-Audiopegel"
-                >
-                  {audioLevels.bars.map((level, index) => {
-                    const heightPct = Math.max(12, Math.min(100, Math.round(level * 100)));
-                    const barColor = !isLive
-                      ? 'var(--border-strong)'
-                      : muted
-                        ? 'var(--border-strong)'
-                        : speakerSpeaking
-                          ? 'var(--accent)'
-                          : 'var(--positive)';
-                    return (
-                      <span
-                        key={index}
-                        className="w-[3px] rounded-full transition-all duration-75"
-                        style={{
-                          height: `${heightPct}%`,
-                          backgroundColor: barColor,
-                        }}
-                      />
-                    );
-                  })}
-                </div>
+        {/* Dedicated Warm Paper Telemetry & Call Action Bar */}
+        <div
+          className="px-5 py-3.5 space-y-3 shrink-0"
+          style={{
+            backgroundColor: 'var(--bg-page)',
+            borderBottom: '1px solid var(--border-hairline)',
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
                 {isLive && (
                   <span
-                    className="font-mono-num text-[12px] min-w-[40px] text-right"
-                    style={{ color: 'var(--text-secondary)' }}
-                  >
-                    {formatDuration(elapsedSeconds)}
-                  </span>
+                    className="inline-block h-2 w-2 rounded-full shrink-0"
+                    style={{ backgroundColor: 'var(--accent-warm)' }}
+                  />
                 )}
+                <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  {telemetryStatusLabel}
+                </span>
+              </div>
+              <div className="mt-0.5 text-[11.5px] flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                <span>{LANGUAGE_META[voice.languageLock].nameDe}</span>
+                <span>·</span>
+                <span className="font-mono-num">{PACE_PLAYBACK_RATE[voice.pace]}x</span>
+                <span>·</span>
+                <span>{voice.depth === 'indepth' ? 'In Depth' : 'Kurz'}</span>
               </div>
             </div>
 
-            {/* Call Action Row */}
-            <div className="flex items-center gap-2">
-              {!isLive && !isConnecting && (
+            {/* 12-Bar Real Telemetry Meter */}
+            <div className="flex items-center gap-2.5 shrink-0">
+              <div
+                className="flex items-end gap-[3px] h-7 px-1"
+                aria-label="Live-Audiopegel"
+              >
+                {audioLevels.bars.map((level, index) => {
+                  const heightPct = Math.max(12, Math.min(100, Math.round(level * 100)));
+                  const barColor = !isLive
+                    ? 'var(--border-strong)'
+                    : muted
+                      ? 'var(--border-strong)'
+                      : speakerSpeaking
+                        ? 'var(--accent-warm)'
+                        : 'var(--accent)';
+                  return (
+                    <span
+                      key={index}
+                      className="w-[3px] rounded-full transition-all duration-75"
+                      style={{
+                        height: `${heightPct}%`,
+                        backgroundColor: barColor,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              {isLive && (
+                <span
+                  className="font-mono-num text-[12px] min-w-[40px] text-right"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {formatDuration(elapsedSeconds)}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Call Action Row */}
+          <div className="flex items-center gap-2">
+            {!isLive && !isConnecting && (
+              <button
+                type="button"
+                onClick={() => void handleStartCall()}
+                className="btn-accent flex-1"
+                disabled={!hasApiKey}
+                style={{ opacity: hasApiKey ? 1 : 0.55 }}
+              >
+                <Mic size={16} strokeWidth={1.5} />
+                <span>Gespräch starten</span>
+              </button>
+            )}
+
+            {isConnecting && (
+              <>
                 <button
                   type="button"
-                  onClick={() => void handleStartCall()}
-                  className="btn-accent flex-1"
-                  disabled={!hasApiKey}
-                  style={{ opacity: hasApiKey ? 1 : 0.55 }}
+                  disabled
+                  className="btn-secondary flex-1"
+                  style={{ opacity: 0.85, cursor: 'wait' }}
                 >
-                  <Mic size={16} strokeWidth={1.5} />
-                  <span>Gespräch starten</span>
+                  <Loader2 size={15} strokeWidth={1.5} className="animate-spin" />
+                  <span>Verbindet...</span>
                 </button>
-              )}
+                <button
+                  type="button"
+                  onClick={handleEndCall}
+                  className="btn-secondary"
+                  style={{ color: 'var(--negative)' }}
+                >
+                  Abbrechen
+                </button>
+              </>
+            )}
 
-              {isConnecting && (
-                <>
-                  <button
-                    type="button"
-                    disabled
-                    className="btn-secondary flex-1"
-                    style={{ opacity: 0.85, cursor: 'wait' }}
-                  >
-                    <Loader2 size={15} strokeWidth={1.5} className="animate-spin" />
-                    <span>Verbindet...</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleEndCall}
-                    className="btn-secondary"
-                    style={{ color: 'var(--negative)' }}
-                  >
-                    Abbrechen
-                  </button>
-                </>
-              )}
+            {isLive && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleToggleMute}
+                  className="btn-secondary flex-1"
+                  style={{
+                    backgroundColor: muted ? 'var(--accent-warm-soft)' : 'var(--bg-card)',
+                    color: muted ? 'var(--accent-warm)' : 'var(--text-primary)',
+                    borderColor: muted ? 'var(--accent-warm-border)' : 'var(--border-hairline)',
+                  }}
+                >
+                  {muted ? (
+                    <MicOff size={15} strokeWidth={1.5} />
+                  ) : (
+                    <Mic size={15} strokeWidth={1.5} />
+                  )}
+                  <span>{muted ? 'Stumm aktiv' : 'Stumm'}</span>
+                  <span className="keycap">M</span>
+                </button>
 
-              {isLive && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleToggleMute}
-                    className="btn-secondary flex-1"
-                    style={{
-                      backgroundColor: muted ? 'var(--warning-soft)' : 'var(--bg-raised)',
-                      color: muted ? 'var(--warning)' : 'var(--text-primary)',
-                      borderColor: muted ? 'var(--warning)' : 'var(--border-hairline)',
-                    }}
-                  >
-                    {muted ? (
-                      <MicOff size={15} strokeWidth={1.5} />
-                    ) : (
-                      <Mic size={15} strokeWidth={1.5} />
-                    )}
-                    <span>{muted ? 'Stumm aktiv' : 'Stumm'}</span>
-                    <span className="keycap">M</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleEndCall}
-                    className="btn-secondary"
-                    style={{
-                      backgroundColor: 'var(--negative-soft)',
-                      color: 'var(--negative)',
-                      borderColor: 'transparent',
-                    }}
-                  >
-                    <PhoneOff size={15} strokeWidth={1.5} />
-                    <span>Beenden</span>
-                  </button>
-                </>
-              )}
-            </div>
-
-            {errorMessage && (
-              <div
-                className="px-2.5 py-2 rounded-lg text-[12px] leading-snug"
-                style={{
-                  backgroundColor: 'var(--negative-soft)',
-                  color: 'var(--negative)',
-                }}
-                role="alert"
-              >
-                {errorMessage}
-              </div>
+                <button
+                  type="button"
+                  onClick={handleEndCall}
+                  className="btn-secondary"
+                  style={{
+                    backgroundColor: 'var(--negative-soft)',
+                    color: 'var(--negative)',
+                    borderColor: 'transparent',
+                  }}
+                >
+                  <PhoneOff size={15} strokeWidth={1.5} />
+                  <span>Beenden</span>
+                </button>
+              </>
             )}
           </div>
+
+          {errorMessage && (
+            <div
+              className="border-l-2 py-1 pl-3 text-[12px] leading-snug"
+              style={{
+                borderColor: 'var(--negative)',
+                color: 'var(--negative)',
+              }}
+              role="alert"
+            >
+              {errorMessage}
+            </div>
+          )}
         </div>
 
         {/* Live Transcript Feed */}
-        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5">
+        <div
+          className="flex-1 overflow-y-auto px-5 py-4 space-y-3"
+          style={{ backgroundColor: 'var(--bg-card)' }}
+        >
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+            <span className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
               Live-Transkript
             </span>
             {transcript.length > 0 && (
@@ -1347,31 +1330,28 @@ export function VoiceTutorDrawer({
 
           {transcript.length === 0 ? (
             <div
-              className="surface-raised px-3.5 py-4 text-[13px] space-y-2 leading-relaxed"
+              className="py-2 text-[13px] space-y-2 leading-relaxed"
               style={{ color: 'var(--text-secondary)' }}
             >
               <p className="m-0 font-medium" style={{ color: 'var(--text-primary)' }}>
-                Gesprächsbereit mit Sprach-Sperre ({LANGUAGE_META[voice.languageLock].nameDe})
+                Bereit mit Sprach-Sperre ({LANGUAGE_META[voice.languageLock].nameDe})
               </p>
-              <p className="m-0 text-[12px]">
+              <p className="m-0 text-[12.5px]">
                 Antworten bleiben standardmässig kompakt. Sage jederzeit «in depth» oder «genauer erklären», um sofort eine ausführliche Schritt-für-Schritt-Erklärung zu erhalten.
               </p>
               <p className="m-0 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                Tipp: Du kannst dem Tutor auch während er spricht ins Wort fallen — die Wiedergabe stoppt sofort.
+                Du kannst dem Tutor auch während er spricht ins Wort fallen — die Wiedergabe stoppt sofort.
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {transcript.map((item) => {
                 if (item.role === 'system') {
                   return (
                     <div key={item.id} className="flex justify-center py-0.5">
                       <span
-                        className="px-2.5 py-1 rounded-full text-[11px]"
-                        style={{
-                          backgroundColor: 'var(--bg-raised)',
-                          color: 'var(--text-muted)',
-                        }}
+                        className="text-[11.5px] italic"
+                        style={{ color: 'var(--text-muted)' }}
                       >
                         {item.text}
                       </span>
@@ -1386,20 +1366,28 @@ export function VoiceTutorDrawer({
                     className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
                   >
                     <span
-                      className="text-[11px] mb-0.5 px-1"
+                      className="text-[11px] mb-1 px-0.5"
                       style={{ color: 'var(--text-muted)' }}
                     >
                       {isUser ? 'Du' : voice.voiceName}
                     </span>
                     <div
-                      className="max-w-[88%] px-3 py-2 rounded-xl text-[13px] leading-relaxed whitespace-pre-wrap"
-                      style={{
-                        backgroundColor: isUser ? 'var(--accent-soft)' : 'var(--bg-raised)',
-                        border: isUser
-                          ? '1px solid var(--accent-border)'
-                          : '1px solid var(--border-hairline)',
-                        color: 'var(--text-primary)',
-                      }}
+                      className={
+                        isUser
+                          ? 'max-w-[88%] px-3.5 py-2 rounded-2xl text-[13.5px] leading-relaxed whitespace-pre-wrap'
+                          : 'max-w-[92%] border-l-2 pl-3 py-0.5 text-[13.5px] leading-relaxed whitespace-pre-wrap'
+                      }
+                      style={
+                        isUser
+                          ? {
+                              backgroundColor: 'var(--bg-raised)',
+                              color: 'var(--text-primary)',
+                            }
+                          : {
+                              borderColor: 'var(--accent)',
+                              color: 'var(--text-primary)',
+                            }
+                      }
                     >
                       {item.text}
                     </div>
@@ -1413,7 +1401,7 @@ export function VoiceTutorDrawer({
 
         {/* Footer: Quick-Impulse Buttons + Text Input */}
         <footer
-          className="px-4 py-3 space-y-2.5 shrink-0"
+          className="px-5 py-3.5 space-y-2.5 shrink-0"
           style={{
             borderTop: '1px solid var(--border-hairline)',
             backgroundColor: 'var(--bg-page)',
@@ -1424,7 +1412,7 @@ export function VoiceTutorDrawer({
               type="button"
               onClick={() => handleQuickImpulse('indepth')}
               className="btn-secondary"
-              style={{ height: 28, padding: '0 10px', fontSize: 12 }}
+              style={{ height: 28, padding: '0 11px', fontSize: 12 }}
             >
               In Depth erklären
             </button>
@@ -1432,7 +1420,7 @@ export function VoiceTutorDrawer({
               type="button"
               onClick={() => handleQuickImpulse('exam')}
               className="btn-secondary"
-              style={{ height: 28, padding: '0 10px', fontSize: 12 }}
+              style={{ height: 28, padding: '0 11px', fontSize: 12 }}
             >
               Mündliche Prüfungsfrage
             </button>
@@ -1440,7 +1428,7 @@ export function VoiceTutorDrawer({
               type="button"
               onClick={() => handleQuickImpulse('grammar')}
               className="btn-secondary"
-              style={{ height: 28, padding: '0 10px', fontSize: 12 }}
+              style={{ height: 28, padding: '0 11px', fontSize: 12 }}
             >
               Grammatik korrigieren
             </button>
@@ -1456,10 +1444,10 @@ export function VoiceTutorDrawer({
                   ? 'Nachricht oder Stichwort senden...'
                   : 'Frage tippen (startet bei Senden das Gespräch)...'
               }
-              className="flex-1 h-9 px-3 rounded-lg text-[13px]"
+              className="flex-1 h-9 px-3 rounded-full text-[13px]"
               style={{
                 backgroundColor: 'var(--bg-card)',
-                border: '1px solid var(--border-strong)',
+                border: '1px solid var(--border-hairline)',
                 color: 'var(--text-primary)',
               }}
             />

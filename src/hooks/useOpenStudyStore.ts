@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { getColorSchemeById } from '../data/colorSchemes';
 import { createDemoState } from '../data/demoData';
 import {
+  ColorSchemeId,
   DailyPlanTask,
   FocusSessionLog,
   MasteryState,
@@ -34,8 +36,12 @@ function loadState(): OpenStudyState {
 
   // Isolated demo mode (used for public showcase & automated preview screenshots)
   if (isDemoQueryActive()) {
+    const schemeParam = new URLSearchParams(window.location.search).get('scheme') ?? undefined;
+    const schemeDef = getColorSchemeById(schemeParam || demo.colorScheme);
     return {
       ...demo,
+      colorScheme: schemeDef.id,
+      theme: schemeDef.isDark ? 'dark' : 'light',
       onboardingDone: true,
     };
   }
@@ -54,9 +60,15 @@ function loadState(): OpenStudyState {
       };
     }
     const parsed = JSON.parse(raw) as Partial<OpenStudyState>;
+    const resolvedScheme = getColorSchemeById(
+      parsed.colorScheme ?? (parsed.theme === 'dark' ? 'midnight-teal' : 'focus-cream')
+    );
     return {
       ...demo,
       ...parsed,
+      onboardingDone: true,
+      colorScheme: resolvedScheme.id,
+      theme: resolvedScheme.isDark ? 'dark' : 'light',
       provider: {
         ...demo.provider,
         ...(parsed.provider ?? {}),
@@ -77,7 +89,23 @@ export function useOpenStudyStore() {
   const demoMode = isDemoQueryActive();
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', state.theme);
+    const scheme = getColorSchemeById(state.colorScheme);
+    const root = document.documentElement;
+    const prevScheme = root.getAttribute('data-scheme');
+    if (prevScheme && prevScheme !== scheme.id) {
+      root.classList.add('scheme-switching');
+      root.setAttribute('data-scheme', scheme.id);
+      root.setAttribute('data-theme', scheme.isDark ? 'dark' : 'light');
+      void root.offsetHeight;
+      requestAnimationFrame(() => root.classList.remove('scheme-switching'));
+    } else {
+      root.setAttribute('data-scheme', scheme.id);
+      root.setAttribute('data-theme', scheme.isDark ? 'dark' : 'light');
+    }
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute('content', scheme.themeColor);
+    }
     if (demoMode) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -86,8 +114,24 @@ export function useOpenStudyStore() {
     }
   }, [state, demoMode]);
 
+  const setColorScheme = useCallback((schemeId: ColorSchemeId) => {
+    const scheme = getColorSchemeById(schemeId);
+    setState((s) => ({
+      ...s,
+      colorScheme: scheme.id,
+      theme: scheme.isDark ? 'dark' : 'light',
+    }));
+  }, []);
+
   const toggleTheme = useCallback(() => {
-    setState((s) => ({ ...s, theme: s.theme === 'light' ? 'dark' : 'light' }));
+    setState((s) => {
+      const nextScheme: ColorSchemeId = s.theme === 'light' ? 'midnight-teal' : 'focus-cream';
+      return {
+        ...s,
+        colorScheme: nextScheme,
+        theme: nextScheme === 'midnight-teal' ? 'dark' : 'light',
+      };
+    });
   }, []);
 
   const setActiveCourse = useCallback((courseId: string) => {
@@ -252,6 +296,7 @@ export function useOpenStudyStore() {
     setState((prev) => ({
       ...fresh,
       theme: prev.theme,
+      colorScheme: prev.colorScheme,
       onboardingDone: true,
     }));
   }, []);
@@ -260,6 +305,7 @@ export function useOpenStudyStore() {
     state,
     demoMode,
     toggleTheme,
+    setColorScheme,
     setActiveCourse,
     completeOnboarding,
     updateProvider,
